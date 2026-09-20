@@ -1,0 +1,54 @@
+:root{--ui-line:#dde2eb;--ui-focus:#839fd4;--ui-radius:12px;--ui-surface:#fff}
+header{height:42px;background:#f5f5f7;border:0;color:#747d8e;font-size:12px;padding-left:24px;padding-right:155px}
+header:after{content:"";position:fixed;left:0;right:0;top:41px;height:1px;background:var(--ui-line);pointer-events:none}
+header>span:first-child{font-size:11px;font-weight:550;letter-spacing:.25px;color:#8b93a2}
+header>span:nth-child(2){display:flex;align-items:center;gap:9px;white-space:nowrap}
+header>span:nth-child(2):before{content:"";width:7px;height:7px;border-radius:50%;background:#5485e4;box-shadow:0 0 0 3px #e3ebfc}
+header strong{font-size:13px;color:#303641;font-weight:650}
+.version-badge{font-size:11px;background:#e9ecf2;padding:3px 7px;margin-left:0}
+#header-nas{display:none!important}
+.top{min-height:44px;align-items:center;margin-bottom:24px}.nas-tools{align-items:center;gap:12px}
+#sync-label{padding:8px 12px;border:1px solid var(--ui-line);border-radius:20px;background:#fafbfe;font-size:12px;color:#707b8e}
+.summary{padding:0;gap:0;overflow:hidden;border:1px solid var(--ui-line);border-radius:20px;background:white}
+.summary>.metric{position:relative;border:0!important;border-radius:0;padding:24px 28px;margin:0;min-height:118px;align-self:stretch;box-shadow:none;text-align:left;background:transparent;transition:background 140ms ease}
+.summary>.metric:first-child{border-radius:19px 0 0 19px}.summary>.metric:last-child{border-radius:0 19px 19px 0}
+.summary>.metric:not(:last-child):after{content:"";position:absolute;right:0;top:24px;bottom:24px;width:1px;background:#e7ebf2}
+.summary>.metric:hover{background:#f2f5fb}.summary>.metric:active{transform:none;background:#e9effa}
+.summary>.metric:focus-visible{outline:2px solid var(--ui-focus);outline-offset:-4px}
+button,.field,.search,select,textarea{border-color:var(--ui-line);border-radius:var(--ui-radius)}
+.field,.search,select,textarea{background:#fff;min-height:44px;box-shadow:none;outline:none;color:#303641}
+.field:focus,.search:focus,textarea:focus{border-color:var(--ui-focus);box-shadow:0 0 0 2px #dce6f580;outline:none}
+button:focus-visible{outline:2px solid var(--ui-focus);outline-offset:2px}
+.primary{border:1px solid transparent;box-shadow:none}.note{border:1px solid #e3eafb;background:#f0f4fc}
+.error-note{border-color:#f2dcd6;background:#fff3f0}
+.detail-drawer{border:1px solid var(--ui-line);background:#fafbfe;box-shadow:0 16px 60px #263b551c;border-radius:22px}
+.detail-drawer .modalhead{border-bottom:1px solid var(--ui-line);background:#fafbfe}
+.drill-row{border:1px solid var(--ui-line);border-radius:14px;background:#fff;padding:18px;min-height:76px;box-shadow:none}
+.drill-row:hover{background:#f3f6fc;border-color:#cbd8ec}.member-row{border-color:#e4e8f0}
+.member-add{align-items:center;gap:12px}.member-add .field{min-width:0}
+.custom-select{display:inline-flex;position:relative;flex-shrink:0;width:100%;min-width:130px}
+.custom-select>select{display:none!important}
+.select-trigger{display:flex;align-items:center;justify-content:space-between;gap:20px;text-align:left;width:100%;min-height:46px;padding:11px 14px;background:#fff;border:1px solid var(--ui-line);border-radius:12px;box-shadow:none}
+.select-trigger:after{content:"⌄";color:#7f8b9f;font-size:18px;line-height:1;flex-shrink:0}.select-trigger:hover{background:#fafbfe}
+.select-trigger[aria-expanded=true]{border-color:var(--ui-focus);box-shadow:0 0 0 2px #dce6f580}
+.select-popup{position:fixed;inset:auto;margin:0;padding:6px;background:#fffffff7;border:1px solid var(--ui-line);border-radius:14px;box-shadow:0 12px 36px #24385426;max-height:300px;overflow-y:auto;min-width:180px;backdrop-filter:blur(20px);color:#303641}
+.select-popup:popover-open{display:grid;gap:3px}.select-popup button{border:0;border-radius:9px;background:transparent;padding:10px 12px;text-align:left;min-height:40px;font-size:14px;line-height:1.5;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.select-popup button:hover,.select-popup button:focus-visible{background:#f0f4fc;outline:none}.select-popup button[aria-selected=true]{background:#eaf0fc;color:#3265ba}.select-popup button[aria-selected=true]:after{content:"✓"}
+.tools>.custom-select{width:160px}.member-add>.custom-select{width:175px}.modalbody>.custom-select{margin-top:2px}
+@media(prefers-reduced-motion:reduce){.summary>.metric{transition:none}}
+
+#sync-label{display:inline-flex;align-items:center;gap:7px}#sync-label:before{content:"";width:6px;height:6px;border-radius:50%;background:#a5afbd}#sync-label[data-online="true"]:before{background:#35a57b}.select-popup{max-height:360px;scrollbar-width:thin;scrollbar-color:#c8cfda transparent}
+
+/* Sheets start below the native window controls rather than behind them. */
+.detail-drawer{inset:54px 12px 12px auto;height:calc(100dvh - 66px);max-height:calc(100dvh - 66px)}.detail-drawer .modalhead{padding:22px 26px;gap:16px;min-height:84px;align-items:flex-start}.detail-drawer .modalhead h2{padding-top:5px}.detail-drawer .modalhead>button{width:36px;height:36px;min-height:36px;padding:0;flex-shrink:0;border:1px solid var(--ui-line);background:#f1f3f8;border-radius:11px;font-size:20px;line-height:1;color:#737f91}.detail-drawer .modalhead>button:hover{background:#e7ebf3;color:#303b4c}
+.window-controls,.window-controls[popover]{position:fixed;inset:0 0 auto auto;margin:0;padding:0;width:138px;height:42px;display:flex;border:0;border-radius:0;background:#f5f5f7;overflow:visible;-webkit-app-region:no-drag;z-index:2147483647}
+.window-controls button{display:flex!important;align-items:center;justify-content:center;width:46px;height:42px;min-height:42px;padding:0;border:0;border-radius:0;background:transparent;color:#626975;cursor:pointer;-webkit-app-region:no-drag;transition:background .14s,color .14s}
+.window-controls button:hover{background:#e0e4ec;color:#202733}.window-controls button:active{background:#cfd6e1;transform:none}.window-controls button[data-action=close]:hover{background:#df4351;color:white}.window-controls button[data-action=close]:active{background:#bd2e3b}.window-controls button:focus-visible{outline:2px solid #5485e4;outline-offset:-4px}
+.window-min{width:11px;height:1px;background:currentColor}.window-max{width:10px;height:10px;border:1px solid currentColor}.restored .window-max{box-shadow:3px -3px 0 -1px #f5f5f7,3px -3px 0 0 currentColor}.window-close{font-size:21px;font-weight:300;line-height:1}
+.nas-loading{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;align-items:center;gap:14px;padding:16px 20px;width:max-content;max-width:calc(100vw - 48px);background:#fafbfe;border:1px solid var(--ui-line);border-radius:16px;box-shadow:0 8px 32px #263b551f;pointer-events:none}.nas-loading[hidden]{display:none}.nas-loading strong{display:block;font-size:14px;color:#384760}.nas-loading small{display:block;margin-top:5px;font-size:12px;color:#768298}.nas-spinner{width:22px;height:22px;flex-shrink:0;border:2px solid #dce4f2;border-top-color:#477cec;border-radius:50%;animation:ui-spin .8s linear infinite}.nas-busy #sync-label:before,.nas-busy #nas-status .nas-dot{background:transparent;border:2px solid #dce4f2;border-top-color:#477cec;width:10px;height:10px;animation:ui-spin .8s linear infinite}
+button,.drill-row,.identity,.card{transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}button:not(:disabled):active{transform:translateY(1px)}.drill-row:hover,.identity:hover{box-shadow:0 3px 12px #263b550a}.select-popup:popover-open{animation:ui-menu .14s ease-out}.card:hover{box-shadow:0 6px 20px #263b550b}button:disabled{cursor:wait}.detail-drawer{animation:ui-sheet .2s ease-out}
+@keyframes ui-spin{to{transform:rotate(360deg)}}@keyframes ui-menu{from{opacity:0;translate:0 -4px}to{opacity:1;translate:0 0}}@keyframes ui-sheet{from{opacity:0;translate:16px 0}to{opacity:1;translate:0 0}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.nas-loading[popover]{inset:auto auto 24px 50%;margin:0;color:inherit}.window-controls button:active{transform:none}
+/* Keep the title divider visible above control backgrounds in both document and modal top layers. */
+.window-controls::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--ui-line);pointer-events:none;z-index:1}

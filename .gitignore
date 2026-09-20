@@ -1,0 +1,14 @@
+node_modules/
+release/
+outputs/
+checks/
+test-data/
+ui/vendor/
+*.log
+*.sqlite*
+*.db
+*.enc
+.env
+.env.*
+*.pem
+*.key

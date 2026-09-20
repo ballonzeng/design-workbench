@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>设计协作</title>
+<link rel="icon" href="../assets/icon.png">
+<link rel="stylesheet" href="style.css">
+<script defer src="vendor/lucide.min.js"></script>
+<script defer src="bridge.js"></script>
+<script defer src="calendar.js"></script>
+<script defer src="app.js"></script>
+</head>
+<body>
+<header class="window-bar" aria-label="软件标题栏">
+ <div class="window-lockup"><span class="window-mark" aria-hidden="true"></span><strong id="window-title">设计协作</strong><span class="window-divider" aria-hidden="true"></span><span id="window-role">工作台</span><span class="window-version" id="app-version">v—</span></div>
+ <span class="window-credit">Design by Mason Zeng</span>
+</header>
+<div class="app">
+ <aside class="sidebar" aria-label="主导航">
+  <div class="brand"><img id="app-icon" src="../assets/icon-manager.png" alt=""><div>设计协作<span id="client-label">正在连接</span></div></div>
+  <div class="sidebar-section">工作空间</div>
+  <nav id="navigation"></nav>
+  <div class="sidebar-bottom"><div class="connection" id="connection-state"></div><button class="identity" id="identity-button" data-view="settings"><span class="avatar small" id="identity-avatar">设</span><span id="identity-name">设计协作</span><i data-lucide="chevrons-up-down"></i></button></div>
+ </aside>
+ <div class="workspace">
+  <header class="toolbar"><div id="breadcrumb">工作台</div><div class="toolbar-right"><span id="current-date"></span><span class="connection-pill" id="nas-badge"></span><button class="icon-button" data-command="refresh" aria-label="检查并同步 NAS" title="检查并同步 NAS"><i data-lucide="refresh-cw"></i></button></div></header>
+  <div class="offline-banner" id="offline-banner" role="status" hidden></div>
+  <main id="main" tabindex="-1"><div class="loading-shell">正在打开工作台…</div></main>
+ </div>
+</div>
+<dialog id="sheet" aria-labelledby="sheet-title"><div class="sheet-header"><div><p class="eyebrow" id="sheet-eyebrow"></p><h2 id="sheet-title"></h2></div><button class="icon-button" data-command="close-sheet" aria-label="关闭面板"><i data-lucide="x"></i></button></div><div id="sheet-body"></div></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
