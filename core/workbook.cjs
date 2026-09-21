@@ -133,10 +133,16 @@ function parseRequirement(bytes,filename,{categories={},extras={}}={}){
 }
 const ALLOWED=new Set(['E4','F4','G4','H4','I4','J4','K4','L4','M4','N4']);
 const escapeXml=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
-function patchWorkbook(bytes,patch){
- const wb=unpack(bytes),s=wb.status;let xml=s.content;
+function patchWorkbook(bytes,patch,{resetRatingsFor=null}={}){
+ const wb=unpack(bytes),s=wb.status;let xml=s.content;const allowed=new Set(ALLOWED);patch={...patch};
+ if(resetRatingsFor){
+  const quality=cellText(s.cells.J5?.value)==='质量打分',timeliness=cellText(s.cells.K5?.value)==='时效打分';
+  if(quality!==timeliness)fail('评分栏与标准模板不一致，未回退原表');
+  if(quality&&timeliness){for(const addr of ['K6',...resetRatingsFor.map(i=>'J'+i.row)]){if(!/^[JK][1-9][0-9]*$/.test(addr))fail('评分行无效');if(s.cells[addr]&&s.cells[addr].value!==''){allowed.add(addr);patch[addr]=''}}}
+ }
+
  for(const [addr,value] of Object.entries(patch)){
-  if(!ALLOWED.has(addr))fail('禁止写入此模板字段：'+addr,403);
+  if(!allowed.has(addr))fail('禁止写入此模板字段：'+addr,403);
   const cell=s.cells[addr];if(!cell||cell.formula)fail('模板字段缺失或包含公式：'+addr);
   if(s.tree.sheetProtection&&wb.styles[cell.style]?.protection?.['@_locked']!=='0')fail('模板字段受保护，无法自动回填：'+addr);
   const re=new RegExp('<c\\b(?=[^>]*\\br="'+addr+'")[^>]*?(?:\\/>|>[\\s\\S]*?<\\/c>)');

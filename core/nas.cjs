@@ -104,7 +104,7 @@ class Nas{
  }
  async sync(oldTask,next,patch,event){
   await this.ready();const source=this.taskPath(oldTask),dest=await guarded(this.config.taskRoot,STAGES[next.state],next.filename);
-  const original=await this.readTask(oldTask),patched=Object.keys(patch).length?patchWorkbook(original,patch):original;
+  const original=await this.readTask(oldTask),patched=Object.keys(patch).length?patchWorkbook(original,patch,{resetRatingsFor:event.kind==='rollback'&&oldTask.state!==next.state?next.items:null}):original;
   const bytes=next.workbookTaskId===next.id?identifyWorkbook(patched,next.id):patched;
   if(source!==dest&&await exists(dest))fail('目标目录已有同名需求表，未覆盖');
   const jobId=crypto.randomUUID(),backup=path.join(path.dirname(source),'.workbench-'+jobId+'.bak');

@@ -24,6 +24,12 @@ test('automatic naming publishes sibling source and artboard folder without rena
   const records=await service.call(actor,'assets');assert.equal(records[0].taskId,t.id);assert.equal(records[0].requirement.canOpen,true);
   const next={...service.store.get('task',t.id),title:'改名后的需求',filename:'新需求.xlsx'};service.store.put('task',t.id,next);
   assert.equal((await service.call(actor,'assets'))[0].requirement.filename,'新需求.xlsx');
+  const reopened={...next,archiveRound:1,deliveries:[],sealed:false};service.store.put('task',reopened.id,reopened);
+  const retry=await service.call(actor,'archive-prepare',payload);assert.notEqual(retry.id,batch.id);
+  for(let i=0;i<files.length;i++)await service.assets.receive(retry.id,String(i),actor,createReadStream(selected.files[i].file),files[i].size);
+  const revised=await service.call(actor,'archive-commit',{uploadId:retry.id});assert.ok(Object.values(service.store.get('upload',retry.id).published).every(file=>file.includes('返工-')));
+  assert.ok((await fs.stat(path.join(base,folder+'.psd'))).isFile());assert.equal(revised.deliveries.length,1);
+  await assert.rejects(service.call(actor,'archive-commit',{uploadId:batch.id}),/回退前/);
  }finally{await service.stop()}
 });
 test('one mixed folder classifies PSD plus a single PNG without renaming inner files',()=>{

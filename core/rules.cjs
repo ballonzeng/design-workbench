@@ -81,6 +81,25 @@ function transition(task,actor,action,payload={},now=Date.now()){
  if(payload.version!==t.version)fail('任务已更新，请刷新后重试',409);
  const date=dayValues(now),stop=()=>{t.elapsedMs=elapsed(t,now);t.runningSince=null};
  switch(action){
+  case 'rollback':
+   manager(actor);if(t.state===0)fail('已在待分配，不能继续回退',409);
+   if(payload.confirmed!==true)fail('请确认回退目标及清理内容');
+   if(t.sealed){t.sealed=false;delete t.sealedAt;break}
+   stop();t.state--;t.pauseReason=null;
+   if(task.state===4){
+    t.deliveryHistory=[...(t.deliveryHistory||[]),{at:now,completedAt:task.completedAt,sealedAt:task.sealedAt,deliveries:task.deliveries||[],items:structuredClone(task.items)}];
+    t.archiveRound=(t.archiveRound||0)+1;t.deliveries=[];
+    for(const item of t.items){item.sealed=false;for(const key of ['sealedAt','assetId','assetPath','productPath'])delete item[key]}
+    t.sealed=false;delete t.sealedAt;delete t.assetSyncIssue;patch.L4='';
+   }
+   t.completedAt=null;t.completedMonth=null;t.completionFromFolder=false;
+   for(const key of ['confirmedBy','confirmationMethod','completionTimeSource'])delete t[key];
+   for(const key of ['M4','N4'])patch[key]='';
+   if(t.state<3){t.reviewAt=null;for(const key of ['J4','K4'])patch[key]=''}
+   if(t.state===2)t.runningSince=now;
+   if(t.state<2){t.startedAt=null;for(const key of ['H4','I4'])patch[key]='';t.receivedAt=null;t.readAt=null}
+   if(t.state===0){t.owner=null;t.assignedAt=null;t.assignmentId=null;t.requestedDesigner='未分配';for(const key of ['E4','F4','G4'])patch[key]=''}
+   break;
   case 'assign':
    manager(actor);
    if(t.state===4)fail('已完结任务不能改派');

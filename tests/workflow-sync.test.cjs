@@ -225,3 +225,33 @@ test('explicit completed refresh is not swallowed by an in-flight background che
  sync.run=async(force,completed)=>{calls.push([force,completed]);if(calls.length===1)await new Promise(resolve=>finish=resolve);return {checked:true}};
  const background=sync.check(),manual=sync.check(true,{includeCompleted:true});finish();await Promise.all([background,manual]);assert.deepEqual(calls,[[false,false],[true,true]]);
 });
+
+test('manager rolls back every stage, clears workbook milestones and ratings, and can restart the full workflow',async t=>{
+ const {service,current,file,edit}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
+ await edit({H4:46268,I4:12,J4:46268,K4:13,M4:46268,N4:14,L4:'old-delivery'});
+ let wb=unpack(await fs.readFile(file()));wb.entries[wb.status.file]=strToU8(wb.status.content.replace(/(<row r="5">[\s\S]*?)(<\/row>)/,'$1<c r="J5" t="inlineStr"><is><t>质量打分</t></is></c><c r="K5" t="inlineStr"><is><t>时效打分</t></is></c>$2').replace(/(<row r="6">[\s\S]*?)(<\/row>)/,'$1<c r="J6"><v>100</v></c><c r="K6" t="inlineStr"><is><t>满意</t></is></c>$2'));await fs.writeFile(file(),Buffer.from(zipSync(wb.entries)));
+ await service.call(manager,'sync-requirements');assert.equal(current().state,4);
+ const assetFile=path.join(service.nas.config.assetRoot,'old-output.png');await fs.writeFile(assetFile,'keep original delivery');
+ let task=current();task.sealed=true;task.sealedAt=Date.now();task.deliveries=[{id:'prior',path:assetFile}];task.items[0].sealed=true;task.items[0].assetId='prior';task.items[0].assetPath=assetFile;service.store.put('task',task.id,task);service.store.put('asset','prior',{id:'prior',taskId:task.id,files:[{path:assetFile}]});service.store.put('upload','prior',{id:'prior',taskId:task.id,actor:'hong',status:'done'});
+ const rollback=()=>service.call(manager,'action',{taskId:current().id,version:current().version,action:'rollback',confirmed:true});
+ await assert.rejects(service.call({role:'designer',personId:'hong'},'action',{taskId:task.id,version:task.version,action:'rollback',confirmed:true}),/负责人/);
+ await rollback();assert.equal(current().state,4);assert.equal(current().sealed,false);assert.equal(current().deliveries.length,1);
+ await rollback();assert.equal(current().state,3);assert.equal(current().completedAt,null);assert.equal(current().deliveries.length,0);assert.equal(current().items[0].sealed,false);assert.equal(current().deliveryHistory[0].deliveries[0].id,'prior');
+ wb=unpack(await fs.readFile(file()));for(const addr of ['M4','N4','L4','J6','K6'])assert.equal(wb.status.cells[addr].value,'');assert.equal(await fs.readFile(assetFile,'utf8'),'keep original delivery');
+ await assert.rejects(service.assets.commit('prior',{role:'designer',personId:'hong'}),/回退前/);
+ await rollback();assert.equal(current().state,2);assert.ok(current().runningSince);assert.equal(current().reviewAt,null);assert.equal(current().workflowFields.J4,'');
+ await rollback();assert.equal(current().state,1);assert.equal(current().startedAt,null);assert.equal(current().runningSince,null);assert.equal(current().workflowFields.H4,'');
+ await rollback();assert.equal(current().state,0);assert.equal(current().owner,null);assert.match(current().filename,/-未分配.xlsx$/);assert.equal(current().workflowFields.G4,'');
+ await assert.rejects(rollback(),/待分配/);
+ for(const [action,extra] of [['assign',{owner:'hong'}],['start',{}],['review',{}],['approve',{chatConfirmed:true}]])await service.call(action==='start'||action==='review'?{role:'designer',personId:'hong'}:manager,'action',{taskId:current().id,version:current().version,action,...extra});
+ assert.equal(current().state,4);assert.equal(current().sealed,false);assert.equal(current().deliveries.length,0);assert.ok(service.store.events(current().id).filter(e=>e.kind==='rollback').length===5);
+ await assert.rejects(service.assets.finish(current().id,{role:'designer',personId:'hong'},current().version));
+});
+
+test('rollback respects stale versions, duplicate originals, workbook locks and publishing uploads',async t=>{
+ const {service,current,file}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
+ const call=(version=current().version)=>service.call(manager,'action',{taskId:current().id,version,action:'rollback',confirmed:true});
+ await assert.rejects(call(-1),/更新/);const lock=path.join(path.dirname(file()),'~$'+path.basename(file()));await fs.writeFile(lock,'locked');await assert.rejects(call(),/Excel/);assert.equal(current().state,1);await fs.unlink(lock);await service.call(manager,'sync-requirements');
+ const duplicate=path.join(service.nas.config.taskRoot,STAGES[2],current().filename);await fs.copyFile(file(),duplicate);await assert.rejects(call(),/多个状态/);assert.equal(current().state,1);await fs.unlink(duplicate);await service.call(manager,'sync-requirements');
+ service.store.put('upload','pending',{id:'pending',taskId:current().id,status:'publishing',files:[]});await assert.rejects(call(),/写入或传输/);assert.equal(current().state,1);
+});

@@ -216,6 +216,7 @@ class Service extends EventEmitter{
   // Synchronize saved edits before acquiring the mutation lock; retain version checks.
   if(command==='action'){
    const task=this.store.get('task',payload.taskId);if(!task)R.fail('任务不存在',404);
+   if(payload.action==='rollback')R.manager(actor);
    if(actor.role!=='manager')R.own(actor,task);
    await this.requirementsSync.check(true,{includeCompleted:task.state===4});
   }
@@ -261,9 +262,15 @@ class Service extends EventEmitter{
    }else if(command==='action'){
     const old=this.store.get('task',payload.taskId);if(!old)R.fail('任务不存在',404);
     if(payload.action==='assign'&&this.store.get('removedMember',payload.owner))R.fail('该成员已移出组织，不能分配任务');
+    if(payload.action==='rollback'){
+     if(old.workbookSyncIssue)R.fail('请先处理原表异常后回退：'+old.workbookSyncIssue.message,409);
+     const uploads=this.store.all('upload').filter(u=>u.taskId===old.id&&(u.archiveRound||0)===(old.archiveRound||0));
+     if(uploads.some(u=>u.status==='publishing'||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/'))))R.fail('产物正在写入或传输，请等待完成或恢复后再回退',409);
+    }
     const next=R.transition(old,actor,payload.action,payload);
+    if(payload.action==='rollback'&&next.task.state===0)next.task.filename=R.stamp(old.requestedAt)+'-'+old.brand+'-'+(old.title||old.product)+'-'+old.operator+'-未分配.xlsx';
     if(payload.action==='assign')next.task.filename=R.stamp(old.requestedAt)+'-'+old.brand+'-'+(old.title||old.product)+'-'+old.operator+'-'+R.PEOPLE.find(p=>p.id===next.task.owner).name+'.xlsx';
-    const event={kind:payload.action,actor:actor.personId,body:{from:old.state,to:next.task.state,owner:next.task.owner,reason:payload.reason||null}};
+    const event={kind:payload.action,actor:actor.personId,body:{from:old.state,to:next.task.state,owner:next.task.owner,reason:payload.reason||null,...(payload.action==='rollback'?{fromSealed:!!old.sealed,toSealed:!!next.task.sealed,retainedAssetIds:[...(old.deliveries||[]).map(d=>d.id),...old.items.map(i=>i.assetId).filter(Boolean)]}:{})}};
     if(next.task.state===old.state&&!Object.keys(next.patch).length){this.store.atomic(()=>{this.store.put('task',old.id,next.task);this.store.event(event.kind,event.actor,old.id,event.body)});result=next.task}
     else result=await this.nas.sync(old,next.task,next.patch,event);
    }else if(command==='received'||command==='read'){

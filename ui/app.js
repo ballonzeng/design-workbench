@@ -79,6 +79,7 @@ function taskActions(t){
   if(t.state===0)actions='<div class="action-group"><select aria-label="为'+esc(taskName(t))+'选择设计师" data-assignee="'+t.id+'">'+data.people.filter(p=>!p.removed).map(p=>'<option value="'+p.id+'"'+(p.name===t.requestedDesigner?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>'+button('分配任务','assign',id,true,!connected())+'</div>';
   else if(t.state===3)actions=button('确认完成','approve-open',id,true,!connected());
   else actions='<span class="readonly">'+(t.state===4?(t.sealed?'已封存':'等待设计封存'):t.state===2?'设计师正在处理':'等待设计师开始')+'</span>';
+  if(t.state>0)actions+=button(icon('undo-2')+'回退','rollback-open',id,false,!connected());
   if(t.state>0&&t.state<4)actions+=button('改派','reassign-open',id,false,!connected());
  }else{
   if(t.state===1)actions=button(icon('play')+'开始设计','start',id,true,!connected());
@@ -212,7 +213,7 @@ async function taskDetail(id){
  const t=data.tasks.find(t=>t.id===id);if(!t)return;
  if(!manager()&&t.assignmentId&&!t.readAt){try{await api('read',{taskId:id,assignmentId:t.assignmentId})}catch{}}
  openSheet(taskName(t),'<div class="task-detail-score"><span>标准贡献力</span><div class="point-display">'+fmt(points(t))+'<small>点</small></div></div><dl>'+[['任务状态',states[t.state]],['产品名',t.product],['品牌',t.brand],['产品69码',t.code],['运营',t.operator],['设计师',manager()?peopleName(t.owner):data.person?.name],['提出需求',dateTime(t.requestedAt)],['分配时间',dateTime(t.assignedAt)],['首次开始',dateTime(t.startedAt)],['提交待确认',dateTime(t.reviewAt)],['确认完成',dateTime(t.completedAt)],['完成封存',dateTime(t.sealedAt)],['最近更新',dateTime(t.updatedAt)],['实际设计耗时',timeText(elapsed(t))]].map(([k,v])=>'<div class="summary-line"><dt>'+k+'</dt><dd>'+esc(v)+'</dd></div>').join('')+'</dl><div style="margin-top:22px">'+t.items.map(i=>'<div class="item-row"><strong>'+esc(i.typeName)+' · '+fmt(i.points)+' 点</strong><p>'+i.qty+' '+esc(data.rates.find(r=>r.id===i.type)?.unit||'项')+(i.note?' · '+esc(i.note):'')+'</p></div>').join('')+'</div>'+ (t.importedTiming?'<div class="notice">这是从现有 NAS 导入的任务。导入前的准确耗时无法从表内小时字段还原；恢复计时后会继续准确记录。</div>':'')+'<div class="sheet-actions">'+button(icon('file-spreadsheet')+'查看需求表','open-requirement','data-task="'+id+'"',true,!connected())+(t.state===4&&(t.sealed||(t.deliveries||[]).length)?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+(manager()&&t.state===4&&t.sealed?button('恢复待封存','archive-reopen','data-task="'+id+'"'):'')+(manager()?button('检查重复记录','duplicate-inspect','data-task="'+id+'"'):'')+'</div><div id="history-region"></div>',{taskId:id},'TASK DETAILS');
- try{const history=await api('history',{taskId:id});if(dialogContext?.taskId===id){const names={assign:'分配 / 改派任务',start:'开始设计',pause:'暂停设计',resume:'继续计时',review:'提交运营确认',rework:'收到修改，继续设计',approve:'记录运营聊天确认',sealed:'产物封存完成','archive-reopened':'负责人恢复待封存','asset-archived':'一类产物归档成功','asset-removed':'封存文件已删除，恢复待封存','contribution-standard-updated':'贡献力改为按单个成品计算','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'NAS 原表同步'};$('#history-region').innerHTML='<ul class="history-list">'+history.slice(0,8).map(e=>'<li>'+esc(names[e.kind]||e.kind)+'<time>'+dateTime(e.at)+'</time></li>').join('')+'</ul>'}}catch{}
+ try{const history=await api('history',{taskId:id});if(dialogContext?.taskId===id){const names={rollback:'负责人回退环节',assign:'分配 / 改派任务',start:'开始设计',pause:'暂停设计',resume:'继续计时',review:'提交运营确认',rework:'收到修改，继续设计',approve:'记录运营聊天确认',sealed:'产物封存完成','archive-reopened':'负责人恢复待封存','asset-archived':'一类产物归档成功','asset-removed':'封存文件已删除，恢复待封存','contribution-standard-updated':'贡献力改为按单个成品计算','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'NAS 原表同步'};$('#history-region').innerHTML='<ul class="history-list">'+history.slice(0,8).map(e=>'<li>'+esc(names[e.kind]||e.kind)+'<time>'+dateTime(e.at)+'</time></li>').join('')+'</ul>'}}catch{}
 }
 async function pairPerson(id){
  const p=data.people.find(p=>p.id===id);if(!p)return;
@@ -298,7 +299,7 @@ async function taskAction(t,action,extra={}){
  }
  flowReminders.delete(t.id);const updated=await api('snapshot');accept(updated);closeSheet();
  const card=$('[data-card="'+t.id+'"]');if(card&&lastInput==='pointer')card.classList.add('arrival');
- toast(({assign:'已分配，设计端将收到提醒',start:'已开始设计，需求表已流转',review:'已进入待确认',pause:'计时已暂停',resume:'已继续计时',rework:'已恢复设计',approve:'已完结，设计端可以上传封存'})[action]||'已更新');
+ toast(({rollback:'已回退，原需求表和任务状态已同步',assign:'已分配，设计端将收到提醒',start:'已开始设计，需求表已流转',review:'已进入待确认',pause:'计时已暂停',resume:'已继续计时',rework:'已恢复设计',approve:'已完结，设计端可以上传封存'})[action]||'已更新');
 }
 function accept(snapshot){data=snapshot;clockOffset=snapshot.serverTime?snapshot.serverTime-Date.now():clockOffset;if(first){view=manager()?'team':'tasks';first=false}render()}
 document.addEventListener('pointerdown',()=>lastInput='pointer',{passive:true});document.addEventListener('keydown',()=>lastInput='keyboard');
@@ -353,6 +354,10 @@ document.addEventListener('click',async e=>{
  if(command==='product-group-open'){productGroupSheet(el.dataset.group);return}
  if(command==='seal-open'){sealSheet(el.dataset.task);return}
  if(command==='re-pair'){data.requiresPairing=true;render();return}
+ if(command==='rollback-open'){
+  const target=t.sealed?'待封存':states[t.state-1],description=t.sealed?'撤销完成封存标记，保留已上传文件，可以继续补传。':t.state===4?'撤销运营确认、评分及当前封存关联，原交付文件保留为历史。若需要设计师修改，再回退一次到设计中。':t.state===3?'清除本次提交时间、确认和评分，恢复设计计时。设计师修改后重新提交，运营重新确认。':t.state===2?'停止计时，清除本次开始、提交和确认时间；累计设计耗时保留，设计师可重新开始。':'撤销分配和后续环节记录，需求回到待分配。';
+  openSheet('回退到'+target,'<p class="description">'+esc(taskName(t))+'</p><div class="notice">'+esc(description)+'</div><p class="description">原需求表会同步移动并备份，操作保留历史记录。请先保存并关闭 Excel。</p><div class="sheet-actions">'+button('取消','close-sheet')+button('确认回退到'+target,'rollback-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id,rollbackVersion:t.version},'ROLLBACK');return;
+ }
  if(command==='approve-open'){
   openSheet('确认本次设计已完成','<p class="description">'+esc(taskName(t))+' · '+fmt(points(t))+' 点</p><div class="notice">确认后，原需求表将流转到「5.已完结」，设计师随后上传最终产物封存。</div><label class="check-line"><input id="chat-confirmed" type="checkbox"><span>运营已在聊天中确认完成，由我记录本次确认。</span></label><div class="sheet-actions">'+button('确认完成','approve-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id},'COMPLETE TASK');return;
  }
@@ -385,6 +390,7 @@ document.addEventListener('click',async e=>{
   else if(command==='product-variant-move'){
    const targetGroupId=$('#move-'+el.dataset.code).value;if(!targetGroupId)throw Error('请选择目标产品系列');productGroups=await api('product-variant-move',{code:el.dataset.code,targetGroupId});closeSheet();render();toast('69码归组已更新');
   }
+  else if(command==='rollback-confirm'){await taskAction({...t,version:dialogContext.rollbackVersion},'rollback',{confirmed:true})}
   else if(command==='assign')await taskAction(t,'assign',{owner:$('[data-assignee="'+t.id+'"]').value});
   else if(['start','resume','review','rework'].includes(command))await taskAction(t,command);
   else if(command==='pause-confirm')await taskAction(t,'pause',{reason:$('#pause-reason').value});
