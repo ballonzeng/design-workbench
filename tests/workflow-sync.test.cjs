@@ -275,3 +275,36 @@ test('stage rollback reads only the selected requirement and leaves global refre
  await assert.rejects(service.call(manager,'action',{taskId:old.id,version:old.version,action:'rollback',confirmed:true}),/更新/);assert.equal(current().state,2);
  await service.call(manager,'action',{taskId:old.id,version:current().version,action:'rollback',confirmed:true});assert.equal(current().state,1);assert.ok(reads>0);assert.deepEqual(service.requirementsSync.status,status);
 });
+async function correctBarcode(file,code='6970855224164'){
+ const wb=unpack(await fs.readFile(file));wb.entries[wb.status.file]=strToU8(wb.status.content.replace(/(<c r="D6"[^>]*>[\s\S]*?<t>)[^<]*(<\/t>)/,'$1'+code+'$2'));await fs.writeFile(file,Buffer.from(zipSync(wb.entries)));
+}
+test('manager accepts a barcode correction atomically with rollback and preserves prior delivery identity',async t=>{
+ const {service,current,file,edit}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
+ await edit({H4:46268,I4:12,J4:46268,K4:13,M4:46268,N4:14});await service.call(manager,'sync-requirements');
+ const old=current(),oldCode=old.code;old.deliveries=[{id:'old-code-delivery',code:oldCode}];old.items[0].sealed=true;old.items[0].assetId='old-code-delivery';service.store.put('task',old.id,old);service.store.put('asset','old-code-delivery',{id:'old-code-delivery',taskId:old.id,code:oldCode,files:[]});
+ await correctBarcode(file());const changedBytes=await fs.readFile(file());
+ const payload={taskId:old.id,version:old.version,action:'rollback',confirmed:true,acceptCodeCorrection:true};
+ await assert.rejects(service.call(manager,'action',{...payload,acceptCodeCorrection:false}),/69码/);assert.equal(current().code,oldCode);
+ const result=await service.call(manager,'action',payload);assert.equal(result.code,'6970855224164');assert.equal(result.items[0].code,result.code);assert.equal(result.state,3);assert.equal(result.deliveries.length,0);assert.equal(result.items[0].sealed,false);assert.equal(result.deliveryHistory.at(-1).items[0].code,oldCode);assert.equal(service.store.get('asset','old-code-delivery').code,oldCode);assert.equal(result.archiveRound,1);assert.equal(result.workbookSyncIssue,null);
+ const wb=unpack(await fs.readFile(file()));assert.equal(wb.status.cells.D6.value,result.code);assert.equal(wb.status.cells.M4.value,'');assert.equal(wb.status.cells.N4.value,'');
+ const event=service.store.events(old.id).find(e=>e.kind==='rollback');assert.deepEqual(event.body.codeCorrection,{from:oldCode,to:result.code});
+ const job=service.store.all('job').find(j=>j.event?.body?.codeCorrection);assert.deepEqual(await fs.readFile(path.join(service.store.dir,'journals',job.id,'before.xlsx')),changedBytes);
+ await service.call(manager,'action',{taskId:old.id,version:result.version,action:'rollback',confirmed:true});assert.equal(current().state,2);assert.equal(current().code,result.code);
+});
+test('barcode rollback retains permissions, version, duplicate and Excel lock checks',async t=>{
+ const {service,current,file}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;const old=current();await correctBarcode(file());
+ const payload={taskId:old.id,version:old.version,action:'rollback',confirmed:true,acceptCodeCorrection:true};
+ await assert.rejects(service.call({role:'designer',personId:'hong'},'action',payload),/负责人/);
+ await assert.rejects(service.call(manager,'action',{...payload,version:-1}),/更新/);assert.equal(current().code,old.code);
+ const lock=path.join(path.dirname(file()),'~$'+path.basename(file()));await fs.writeFile(lock,'locked');await assert.rejects(service.call(manager,'action',payload),/Excel/);await fs.unlink(lock);
+ const duplicate=path.join(service.nas.config.taskRoot,STAGES[2],current().filename);await fs.copyFile(file(),duplicate);await assert.rejects(service.call(manager,'action',payload),/多个状态/);await fs.unlink(duplicate);
+ service.store.put('upload','active',{id:'active',taskId:old.id,status:'publishing'});await assert.rejects(service.call(manager,'action',payload),/写入或传输/);assert.equal(current().code,old.code);service.store.remove('upload','active');
+});
+test('barcode correction fails safely if product also changes or workbook changes after validation',async t=>{
+ const {service,current,file}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;const old=current(),original=await fs.readFile(file());await correctBarcode(file());
+ const corrected=await fs.readFile(file()),wb=unpack(corrected);wb.entries[wb.status.file]=strToU8(wb.status.content.replace('西红花','其他产品'));await fs.writeFile(file(),Buffer.from(zipSync(wb.entries)));
+ const payload={taskId:old.id,version:old.version,action:'rollback',confirmed:true,acceptCodeCorrection:true};
+ await assert.rejects(service.call(manager,'action',payload),/仅支持更正69码/);assert.equal(current().code,old.code);
+ await fs.writeFile(file(),corrected);const check=service.requirementsSync.checkTask.bind(service.requirementsSync);service.requirementsSync.checkTask=async(...args)=>{const result=await check(...args);await fs.writeFile(file(),original);return result};
+ await assert.rejects(service.call(manager,'action',payload),/原需求表已修改/);assert.equal(current().code,old.code);assert.equal(current().state,old.state);assert.equal(service.store.events(old.id).filter(e=>e.kind==='rollback').length,0);
+});

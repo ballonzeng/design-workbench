@@ -70,17 +70,18 @@ class RequirementsSync{
   if(this.running)return force?this.running.then(()=>this.check(force,{includeCompleted})):this.running;
   this.running=this.run(force,includeCompleted).finally(()=>{this.running=null});return this.running;
  }
- checkTask(taskId){
+ checkTask(taskId,{acceptCodeCorrection=false}={}){
   // A task action neither waits for nor starts a full-library refresh.
   // A separate worker keeps the global sync status and cache unchanged.
-  return new RequirementsSync(this.service).run(true,true,taskId);
+  return new RequirementsSync(this.service).run(true,true,taskId,acceptCodeCorrection);
  }
  issue(task,message,location){
   const current=this.store.get('task',task.id);if(!current||current.version!==task.version)return false;
   if(current.workbookSyncIssue?.message===message&&current.workbookSyncIssue?.stage===location?.stage)return false;
   current.workbookSyncIssue={message,stage:location?.stage||R.STAGES[task.state],filename:location?.filename||task.filename,at:Date.now()};this.store.put('task',task.id,current);return true;
  }
- async run(force,includeCompleted=false,targetId=null){
+ async run(force,includeCompleted=false,targetId=null,acceptCodeCorrection=false){
+  let codeCorrection=null;
   let changed=0,discovery={imported:0,relinked:0,repaired:0,issues:[]},assetSync={changed:0,reopened:0,partial:0};const previousError=this.status.error;
   this.status={...this.status,state:'checking',lastAttemptAt:Date.now()};
   try{
@@ -121,7 +122,16 @@ class RequirementsSync{
        if(!current.workflowFields||current.workbookSyncIssue){current.workflowFields=fields;current.workbookSyncIssue=null;this.store.put('task',task.id,current);changed++}
       }else{
        const categories=Object.fromEntries(task.items.map(i=>[i.row,i.category])),extras=Object.fromEntries(task.items.map(i=>[i.row,i.extra||0]));
-       const parsed=parseRequirement(bytes,location.filename,{categories,extras}),next=reconcileTask(current,parsed,fields,location);
+       const parsed=parseRequirement(bytes,location.filename,{categories,extras});
+       if(targetId&&acceptCodeCorrection&&parsed.code!==current.code){
+        if(current.sealed||parsed.workbookTaskId!==current.id)R.fail('更正69码需要同一任务的原需求表，并先回退到待封存');
+        if(location.state!==current.state||location.filename!==current.filename||['requestedAt','product','brand','workbookBrand','operator','requestedDesigner','title'].some(k=>parsed[k]!==current[k])||Object.keys(fields).some(k=>fields[k]!==current.workflowFields?.[k])||itemsIdentity(current.items.map(i=>({...i,code:parsed.code})))!==itemsIdentity(parsed.items.map(i=>({...i,category:current.items.find(old=>old.row===i.row)?.category}))))R.fail('本次仅支持更正69码后回退；产品、事项、时间或文件位置也有变化，请分别核对');
+        if(current.state!==4&&((current.deliveries||[]).length||current.items.some(i=>i.sealed)))R.fail('当前任务仍有关联交付，请先核对封存状态');
+        // Stage only: commit the corrected code together with the rollback journal.
+        codeCorrection={version:current.version,previousHash:current.workbookHash,hash,from:current.code,to:parsed.code};
+        return;
+       }
+       const next=reconcileTask(current,parsed,fields,location);
        const event={kind:'excel-synced',actor:'nas',body:{from:current.state,to:next.state,source:location.stage,filename:location.filename,owner:next.owner,itemsChanged:itemsIdentity(current.items)!==itemsIdentity(next.items),previousPoints:R.total(current),nextPoints:R.total(next)}};
        if(next.state!==location.state){
         // Use the saved external file as the journal's guarded source; do not overwrite external edits.
@@ -150,7 +160,7 @@ class RequirementsSync{
   this.status={...this.status,state:this.status.error?'failed':'ready',...(this.status.error?{}:{lastCheckedAt:Date.now()})};
   if(changed||discovery.imported||discovery.relinked||discovery.repaired||assetSync.changed||this.status.error!==previousError||force)this.service.broadcast();
   else if(!targetId)this.service.emit?.('sync-status',this.status);
-  return {checked:!this.status.error,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
+  return {checked:!this.status.error,codeCorrection,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }
 module.exports={RequirementsSync,reconcileTask,itemsIdentity};
