@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const source=fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8');
+const source=fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8').replace(/\r\n/g,'\n');
 test('a blocked designer action opens a reminder and never reports successful flow',async()=>{
  let sheet=null,accepted=false;
  const context=vm.createContext({api:async()=>{throw Error('需求表正在被 Excel 占用，请关闭后重试')},manager:()=>false,flowReminders:new Map(),render:()=>{},openSheet:(...args)=>sheet=args,esc:String,states:['待分配','待设计'],button:()=>'',taskName:t=>t.title,accept:()=>{accepted=true}});
@@ -49,4 +49,10 @@ test('modified workbook and permission errors are not presented as Excel editing
   await context.taskAction({id:'t',state:1,filename:'需求.xlsx',version:1},'start');
   assert.match(sheet[1],/实际原因/);assert.ok(sheet[1].includes(message));assert.ok(!sheet[1].includes('程序不会自动关闭 Excel'));
  }
+});
+
+test('completed calibration button submits the version shown when its dialog opened',async()=>{
+ const start=source.indexOf("  else if(command==='calibration-confirm'){"),end=source.indexOf("  else if(command==='asset-scope')",start);assert.ok(start>=0&&end>start);let sent,notice;
+ const context=vm.createContext({command:'calibration-confirm',t:{id:'t',version:8},dialogContext:{calibrationVersion:7},closeSheet:()=>{},accept:()=>{},fmt:String,toast:text=>notice=text,api:async(command,payload)=>{if(command==='calibrate-contribution'){sent=payload;return {previousPoints:1.5,nextPoints:6}}return {}}});
+ await vm.runInContext('(async()=>{'+source.slice(start,end).replace('else if','if')+'})()',context);assert.equal(sent.taskId,'t');assert.equal(sent.version,7);assert.match(notice,/1.5 → 6/);
 });

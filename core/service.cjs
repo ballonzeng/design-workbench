@@ -230,7 +230,9 @@ class Service extends EventEmitter{
    if(requestId&&!/^[a-f0-9-]{36}$/.test(requestId))R.fail('请求编号无效');
    const previous=cacheId&&this.store.get('request',cacheId);if(previous)return previous.result;
    let result;
-    if(command==='configure'){
+    if(command==='calibrate-contribution'){
+     result=await require('./contribution-calibration.cjs').calibrateContribution(this,actor,payload);
+   }else if(command==='configure'){
      R.manager(actor);await this.nas.connect(payload);await this.nas.recover();await this.assets.recover();await this.products.sync();this.startError=null;this.retryAt=0;this.connectFailures=0;result={connected:true};
    }else if(command==='manager-revoke'){
     R.manager(actor);this.store.atomic(()=>{for(const row of this.store.db.prepare("SELECT id,body FROM records WHERE kind='token'").all()){const v=JSON.parse(row.body);if(v.role==='manager')this.store.put('token',row.id,{...v,revoked:true})}for(const row of this.store.db.prepare("SELECT id,body FROM records WHERE kind='pair'").all()){const v=JSON.parse(row.body);if(v.role==='manager')this.store.put('pair',row.id,{...v,used:true})}this.store.event('manager-access-revoked',actor.personId,null,{})});for(const [id,stream]of this.streams)if(stream.actor.role==='manager'){this.streams.delete(id);stream.res.end()}result={revoked:true};

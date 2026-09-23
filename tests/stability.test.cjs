@@ -7,7 +7,7 @@ function xmlSheet(bytes,index){return strFromU8(unzipSync(bytes)['xl/worksheets/
 function cell(xml,ref){return xml.match(new RegExp('<c\\b[^>]*r="'+ref+'"[^>]*>([\\s\\S]*?)</c>'))?.[1]}
 test('notification mute preference maps directly to silent',()=>{assert.equal(notificationOptions(task,{}).silent,false);assert.equal(notificationOptions(task,{mute:false}).silent,false);assert.equal(notificationOptions(task,{mute:true}).silent,true)});
 test('refresh without a lease reports not checked and preserves last successful timestamp',async()=>{
- const sync=new RequirementsSync({store:{},nas:{config:null,lease:null},broadcast(){}});sync.status.lastCheckedAt=123;
+ const sync=new RequirementsSync({store:{all:()=>[]},nas:{config:null,lease:null},broadcast(){}});sync.status.lastCheckedAt=123;
  const result=await sync.check(true);assert.equal(result.checked,false);assert.match(result.error,/未连接/);assert.equal(result.lastCheckedAt,123);
 });
 test('shared asset search includes colleagues and historical product directories while mine filters them',async()=>{
@@ -32,4 +32,12 @@ test('legacy periods without a version are disclosed, and estimated confirmation
  const estimate={...task,state:4,completedAt:at('2026-09-03T12:00:00'),completionFromFolder:true,completionTimeSource:'file-estimate',importedTiming:true};
  const r=createReport([estimate],[],{frequency:'month',anchor:'2026-09-05',generatedAt:Date.now(),unavailable:historical.unavailable});
  const rows=xmlSheet(r.bytes,2);assert.match(cell(rows,'X2'),/否/);assert.doesNotMatch(cell(rows,'S2'),/<v>0<\/v>/);assert.match(xmlSheet(r.bytes,7),/该周期早于/);assert.match(xmlSheet(r.bytes,7),/确认时间为推定/);
+});
+
+test('explicit completed calibration updates prior-month report points and preserves cutoff workflow',t=>{
+ const store=new Store(fs.mkdtempSync(path.join(os.tmpdir(),'report-calibration-')));t.after(()=>store.close());let time=at('2026-08-28T14:00:00');t.mock.method(Date,'now',()=>time);
+ const complete={...task,state:4,completedAt:time,completedMonth:'2026-08',sealed:true};store.put('task',task.id,complete);const cutoff=at('2026-09-01T00:00:00')-1;
+ time=at('2026-09-23T12:00:00');const items=[{type:'creative',qty:5,points:10}],correction={at:time,completedAt:complete.completedAt,owner:complete.owner,code:complete.code,items};store.put('task',task.id,{...complete,items,contributionCalibration:correction});store.put('contributionCalibration',task.id+':'+complete.completedAt+':'+complete.owner,correction);
+ const history=store.reportTasks(cutoff),report=createReport(history.tasks,[],{frequency:'month',anchor:'2026-08-15',generatedAt:time});assert.equal(history.tasks[0].completedAt,complete.completedAt);assert.equal(history.tasks[0].reportCalibrationAt,time);assert.match(cell(xmlSheet(report.bytes,2),'R2'),/>10</);assert.match(cell(xmlSheet(report.bytes,4),'H2'),/>10</);
+ store.put('task',task.id,{...complete,state:3,contributionCalibration:null});assert.equal(store.reportTasks(cutoff).tasks[0].items[0].points,10);store.put('contributionCalibration',task.id+':'+complete.completedAt+':'+complete.owner,{...correction,completedAt:time});assert.equal(store.reportTasks(cutoff).tasks[0].items[0].points,4);
 });

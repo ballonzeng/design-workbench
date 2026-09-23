@@ -87,7 +87,8 @@ function transition(task,actor,action,payload={},now=Date.now()){
    if(t.sealed){t.sealed=false;delete t.sealedAt;break}
    stop();t.state--;t.pauseReason=null;
    if(task.state===4){
-    t.deliveryHistory=[...(t.deliveryHistory||[]),{at:now,completedAt:task.completedAt,sealedAt:task.sealedAt,deliveries:task.deliveries||[],items:structuredClone(task.items)}];
+    t.deliveryHistory=[...(t.deliveryHistory||[]),{at:now,completedAt:task.completedAt,sealedAt:task.sealedAt,deliveries:task.deliveries||[],items:structuredClone([...task.items,...(task.retainedArchiveItems||[])])}];
+    delete t.retainedArchiveItems;delete t.contributionCalibration;
     t.archiveRound=(t.archiveRound||0)+1;t.deliveries=[];
     for(const item of t.items){item.sealed=false;for(const key of ['sealedAt','assetId','assetPath','productPath'])delete item[key]}
     t.sealed=false;delete t.sealedAt;delete t.assetSyncIssue;patch.L4='';

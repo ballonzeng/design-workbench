@@ -18,6 +18,7 @@ function reconcileTask(old,parsed,fields,location,now=Date.now()){
  const dateCorrection=parsed.workbookTaskId===old.id&&old.code===parsed.code&&old.product===parsed.product&&!old.sealed&&!old.items.some(i=>i.sealed)&&!(old.deliveries||[]).length;
  if(identity(old)!==identity(parsed)&&!dateCorrection)R.fail('需求的产品、69码或需求时间已变化，请负责人核对；未自动替换已导入任务');
  const itemsChanged=itemsIdentity(old.items)!==itemsIdentity(parsed.items);
+ if(itemsChanged&&old.state===4)R.fail('已完结任务的事项已修改，请负责人保存并关闭 Excel 后，在任务详情中点击“校准点数”');
  if(itemsChanged&&(old.sealed||old.items.some(item=>item.sealed)))R.fail('此需求已有封存资产，不能再修改事项；请先核对或撤销对应封存');
  const baseline=baselineFor(old),changed=keys=>keys.some(k=>fields[k]!==baseline[k]);
  const folderChanged=location.state!==old.state;
@@ -160,7 +161,7 @@ class RequirementsSync{
   this.status={...this.status,state:this.status.error?'failed':'ready',...(this.status.error?{}:{lastCheckedAt:Date.now()})};
   if(changed||discovery.imported||discovery.relinked||discovery.repaired||assetSync.changed||this.status.error!==previousError||force)this.service.broadcast();
   else if(!targetId)this.service.emit?.('sync-status',this.status);
-  return {checked:!this.status.error,codeCorrection,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
+  return {checked:!this.status.error,codeCorrection,taskIssues:this.store.all('task').filter(t=>(targetId?t.id===targetId:includeCompleted||t.state!==4)&&t.workbookSyncIssue).length,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }
 module.exports={RequirementsSync,reconcileTask,itemsIdentity};

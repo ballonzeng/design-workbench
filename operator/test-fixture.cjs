@@ -1,6 +1,6 @@
 const {zipSync,strToU8}=require('fflate');
 function workbook(){
- const cells={A1:'需求表',A3:'阶段情况',B3:'需求日期',G3:'分配设计',L3:'文件位置',D5:'69码',B6:'九芝堂',C6:'西红花',D6:'6970855224163',F6:'单图任务（复杂元素替换）',G6:1,B4:46268,C4:11,D4:'王燕',E4:46268,F4:11,G4:'洪华',A4:'',H4:'',I4:'',J4:'',K4:'',L4:'',M4:'',N4:''};
+ const cells={A1:'需求表',A3:'阶段情况',B3:'需求日期',G3:'分配设计',L3:'文件位置',D5:'69码',J5:'质量打分',K5:'时效打分',J6:'',K6:'',B6:'九芝堂',C6:'西红花',D6:'6970855224163',F6:'单图任务（复杂元素替换）',G6:1,B4:46268,C4:11,D4:'王燕',E4:46268,F4:11,G4:'洪华',A4:'',H4:'',I4:'',J4:'',K4:'',L4:'',M4:'',N4:''};
  const rows=new Map();for(const [address,value] of Object.entries(cells)){const row=address.match(/\d+/)[0];if(!rows.has(row))rows.set(row,[]);rows.get(row).push(typeof value==='number'?'<c r="'+address+'"><v>'+value+'</v></c>':'<c r="'+address+'" t="inlineStr"><is><t>'+value+'</t></is></c>')}
  const xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const entries={

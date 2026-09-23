@@ -308,7 +308,7 @@ class Assets{
      next=structuredClone(task);
      const deliveries=next.deliveries||[],remaining=deliveries.filter(delivery=>delivery.id!==recorded.id);
      if(remaining.length!==deliveries.length){next.deliveries=remaining;affected=true}
-     for(const item of next.items||[]){
+     for(const item of [...(next.items||[]),...(next.retainedArchiveItems||[])]){
       if(item.assetId!==recorded.id)continue;
       item.sealed=false;delete item.sealedAt;delete item.assetPath;delete item.assetId;delete item.productPath;affected=true;
      }

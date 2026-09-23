@@ -308,3 +308,58 @@ test('barcode correction fails safely if product also changes or workbook change
  await fs.writeFile(file(),corrected);const check=service.requirementsSync.checkTask.bind(service.requirementsSync);service.requirementsSync.checkTask=async(...args)=>{const result=await check(...args);await fs.writeFile(file(),original);return result};
  await assert.rejects(service.call(manager,'action',payload),/原需求表已修改/);assert.equal(current().code,old.code);assert.equal(current().state,old.state);assert.equal(service.store.events(old.id).filter(e=>e.kind==='rollback').length,0);
 });
+
+async function completedCalibrationFixture(t){
+ const f=await setup(t);await f.edit({H4:46268,I4:12,J4:46268,K4:13,M4:46268,N4:14});await f.service.requirementsSync.check(true);
+ await f.service.requirementsSync.stop();
+ const task=f.current();task.sealed=true;task.sealedAt=task.completedAt+1000;task.items[0]={...task.items[0],sealed:true,assetId:'legacy-asset',assetPath:'legacy/path',sealedAt:task.sealedAt};task.deliveries=[{id:'modern-asset',category:'main'}];f.service.store.put('task',task.id,task);
+ f.changeItems=async(type='创意图',qty=3,rows=null)=>{const wb=unpack(await fs.readFile(f.file()));let xml=wb.status.content.replace(/(<c\b[^>]*r="F6"[^>]*>)[\s\S]*?<\/c>/,'$1<is><t>'+type+'</t></is></c>').replace(/(<c\b[^>]*r="G6"[^>]*>)[\s\S]*?<\/c>/,'$1<v>'+qty+'</v></c>');if(rows)xml=rows(xml);wb.entries[wb.status.file]=strToU8(xml);const bytes=Buffer.from(zipSync(wb.entries));await fs.writeFile(f.file(),bytes);return bytes};
+ f.calibrate=(actor=manager,version=f.current().version)=>f.service.call(actor,'calibrate-contribution',{taskId:f.task.id,version});return f;
+}
+
+test('manager calibrates completed types and quantities without changing workbook, timing or archives',async t=>{
+ const f=await completedCalibrationFixture(t),before=f.current(),saved=await f.changeItems();
+ await assert.rejects(f.calibrate({role:'designer',personId:'hong'}),/仅负责人/);
+ await assert.rejects(f.calibrate(manager,before.version-1),/已更新/);
+ const result=await f.calibrate();assert.equal(result.previousPoints,1.5);assert.equal(result.nextPoints,6);
+ const next=f.current();for(const key of ['completedAt','completedMonth','sealed','sealedAt','elapsedMs','owner','state'])assert.deepEqual(next[key],before[key]);assert.deepEqual(next.deliveries,before.deliveries);assert.equal(next.items[0].assetId,'legacy-asset');assert.equal(next.items[0].type,'creative');assert.equal(next.items[0].points,6);assert.deepEqual(await fs.readFile(f.file()),saved);
+ assert.equal(f.service.store.events(next.id)[0].kind,'contribution-calibrated');
+ await f.changeItems('简单信息修改',2);await f.calibrate();assert.equal(require('../core/rules.cjs').total(f.current()),0.3);
+ const {RequirementsSync}=require('../core/requirements-sync.cjs');await new RequirementsSync(f.service).checkTask(next.id);assert.equal(f.current().workbookSyncIssue,null);
+});
+
+test('calibration keeps removed legacy archive links and adds contribution rows',async t=>{
+ const f=await completedCalibrationFixture(t);await f.changeItems('创意图',4,xml=>xml.replace(/<row r="6">([\s\S]*?)<\/row>/,(_,cells)=>'<row r="7">'+cells.replace(/r="([A-Z]+)6"/g,'r="$17"')+'</row>'));
+ await f.calibrate();assert.equal(f.current().items[0].row,7);assert.equal(f.current().items[0].points,8);assert.equal(f.current().retainedArchiveItems[0].assetId,'legacy-asset');
+ const file=path.join(f.root,'assets','legacy.psd');await fs.writeFile(file,'original');f.service.store.put('asset','legacy-asset',{id:'legacy-asset',taskId:f.task.id,files:[{path:file}]});
+ await f.service.assets.reconcileMissingAssets();assert.equal(f.current().sealed,true);await fs.unlink(file);await f.service.assets.reconcileMissingAssets();assert.equal(f.current().sealed,false);assert.equal(f.current().retainedArchiveItems[0].sealed,false);
+});
+
+test('calibration rejects locks, pending uploads, identity and workflow changes without partial changes',async t=>{
+ const f=await completedCalibrationFixture(t),before=f.current();await f.changeItems();const saved=await fs.readFile(f.file()),lock=path.join(path.dirname(f.file()),'~$'+filename);await fs.writeFile(lock,'lock');await assert.rejects(f.calibrate(),/关闭 Excel/);await fs.unlink(lock);
+ f.service.store.put('upload','pending',{id:'pending',taskId:f.task.id,status:'publishing'});await assert.rejects(f.calibrate(),/待处理/);f.service.store.remove('upload','pending');
+ await f.edit({N4:15});await assert.rejects(f.calibrate(),/流转时间/);await fs.writeFile(f.file(),saved);
+ const wb=unpack(saved);wb.entries[wb.status.file]=strToU8(wb.status.content.replace('6970855224163','6970855224999'));await fs.writeFile(f.file(),zipSync(wb.entries));await assert.rejects(f.calibrate(),/69码/);
+ assert.deepEqual(f.current(),before);assert.equal(f.service.store.events(before.id).some(e=>e.kind==='contribution-calibrated'),false);
+});
+
+test('NAS refresh cannot implicitly authorize a completed contribution edit',async t=>{
+ const f=await completedCalibrationFixture(t);await f.changeItems();const {RequirementsSync}=require('../core/requirements-sync.cjs');await new RequirementsSync(f.service).checkTask(f.task.id);
+ assert.equal(f.current().items[0].points,1.5);assert.match(f.current().workbookSyncIssue.message,/负责人.*校准点数/);await f.calibrate();assert.equal(f.current().workbookSyncIssue,null);
+});
+
+test('calibration rejects duplicate originals and concurrent stale saves',async t=>{
+ const f=await completedCalibrationFixture(t);await f.changeItems();const duplicate=path.join(f.taskRoot,STAGES[3],filename);await fs.copyFile(f.file(),duplicate);await assert.rejects(f.calibrate(),/唯一原需求表/);await fs.unlink(duplicate);
+ const version=f.current().version,results=await Promise.allSettled([f.calibrate(manager,version),f.calibrate(manager,version)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.match(results.find(r=>r.status==='rejected').reason.message,/已更新/);assert.equal(f.service.store.events(f.task.id).filter(e=>e.kind==='contribution-calibrated').length,1);
+});
+
+test('calibration detects a workbook changed during validation and leaves the database unchanged',async t=>{
+ const f=await completedCalibrationFixture(t);await f.changeItems();const before=f.current(),originalRead=fs.readFile;let reads=0;
+ t.mock.method(fs,'readFile',async function(target,...args){const bytes=await originalRead(target,...args);if(target===f.file()&&++reads===2)return Buffer.concat([bytes,Buffer.from('changed')]);return bytes});
+ await assert.rejects(f.calibrate(),/刚刚发生变化/);assert.deepEqual(f.current(),before);assert.equal(f.service.store.all('contributionCalibration').length,0);
+});
+
+test('remote manager can calibrate through authenticated RPC while designer cannot',async t=>{
+ const f=await completedCalibrationFixture(t),pair=await f.service.call(manager,'manager-pair-code',{host:'127.0.0.1'}),remote=new Client(decodeCode(pair.code));await remote.pair();t.after(()=>remote.close());await f.changeItems();const payload={taskId:f.task.id,version:f.current().version};
+ await assert.rejects(f.client.rpc('calibrate-contribution',payload),/仅负责人/);const result=await remote.rpc('calibrate-contribution',payload);assert.equal(result.nextPoints,6);
+});

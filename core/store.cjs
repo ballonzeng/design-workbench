@@ -25,6 +25,12 @@ class Store{
  reportTasks(cutoff){
   const rows=this.db.prepare('SELECT v.body,v.at FROM task_versions v WHERE v.at<=? AND v.seq=(SELECT v2.seq FROM task_versions v2 WHERE v2.taskId=v.taskId AND v2.at<=? ORDER BY v2.at DESC,v2.seq DESC LIMIT 1)').all(cutoff,cutoff);
   const tasks=rows.map(r=>({...JSON.parse(r.body),reportSnapshotAt:r.at})).filter(t=>!t.deleted),known=new Set(tasks.map(t=>t.id));
+  // Apply an explicit manager correction to the same completed round only.
+  // Workflow, ownership and timing remain those recorded at the report cutoff.
+  for(const task of tasks){
+   const correction=this.get('contributionCalibration',task.id+':'+task.completedAt+':'+task.owner);
+   if(correction&&task.state===4&&task.completedAt===correction.completedAt&&task.owner===correction.owner&&task.code===correction.code){task.items=structuredClone(correction.items);task.reportCalibrationAt=correction.at}
+  }
   const unavailable=this.all('task').filter(t=>!known.has(t.id)&&Math.min(t.createdAt||Infinity,t.requestedAt||Infinity)<=cutoff).map(t=>({id:t.id,filename:t.filename,reason:'该周期早于可追溯版本记录，无法还原当时人员、事项和状态'}));
   return {tasks,unavailable};
  }

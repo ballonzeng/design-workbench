@@ -4,7 +4,7 @@ const R=require('./rules.cjs');
 
 const TZ=8*3600000,DAY=86400000;
 const STATE_NAMES=R.STAGES.map(value=>value.replace(/^\d+\./,''));
-const EVENT_NAMES={assign:'分配 / 改派',start:'开始设计',pause:'暂停设计',resume:'继续设计',review:'提交确认',rework:'修改后重做',approve:'运营确认完成',sealed:'完成封存','asset-archived':'上传一类产物','asset-removed':'删除封存产物','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'Excel 状态同步','contribution-standard-updated':'贡献力标准更新'};
+const EVENT_NAMES={'contribution-calibrated':'负责人校准点数',assign:'分配 / 改派',start:'开始设计',pause:'暂停设计',resume:'继续设计',review:'提交确认',rework:'修改后重做',approve:'运营确认完成',sealed:'完成封存','asset-archived':'上传一类产物','asset-removed':'删除封存产物','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'Excel 状态同步','contribution-standard-updated':'贡献力标准更新'};
 
 const xml=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 const localParts=timestamp=>{const d=new Date(timestamp+TZ);return {year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate()}};
@@ -50,7 +50,7 @@ function createReport(tasks,events,{frequency,anchor,generatedAt=Date.now(),unav
  const taskRows=selected.map(task=>[
   task.id,STATE_NAMES[task.state]||'未知',task.sealed?'是':'否',dateCell(task.requestedAt),dateCell(task.createdAt),dateCell(task.assignedAt),dateCell(task.startedAt),dateCell(task.reviewAt),dateCell(task.completedAt),dateCell(task.sealedAt),
   task.brand||'',task.product||'',textCell(task.code),task.title||task.product||'',task.operator||'',personName(task.owner),(task.items||[]).length,numberCell(total(task)),numberCell(completeTiming(task)?hours(R.elapsed(task,cutoff)):null),numberCell(completeTiming(task)&&R.elapsed(task,cutoff)>0?total(task)/(R.elapsed(task,cutoff)/3600000):null),
-  numberCell(duration(task.requestedAt,task.completedAt)),numberCell(duration(task.assignedAt,task.startedAt)),numberCell(duration(task.startedAt,task.completedAt)),confirmedInRange(task)?'是':'否',inRange(task.sealedAt,range)?'是':'否',task.filename||'',timingQuality(task),confirmationSource(task),dateCell(task.reportSnapshotAt)
+  numberCell(duration(task.requestedAt,task.completedAt)),numberCell(duration(task.assignedAt,task.startedAt)),numberCell(duration(task.startedAt,task.completedAt)),confirmedInRange(task)?'是':'否',inRange(task.sealedAt,range)?'是':'否',task.filename||'',timingQuality(task),confirmationSource(task),dateCell(task.reportSnapshotAt),dateCell(task.reportCalibrationAt)
  ]);
  const itemRows=[];
  for(const task of selected)for(const item of task.items||[]){const rate=R.RATES.find(candidate=>candidate.id===item.type);itemRows.push([task.id,task.title||task.product||'',personName(task.owner),STATE_NAMES[task.state]||'未知',task.brand||'',task.product||'',textCell(task.code),item.typeName||rate?.name||item.type||'',categoryName(item.category),item.qty||0,rate?.unit||'项',numberCell(Number.isFinite(item.points)&&item.qty?item.points/item.qty:rate?.points),numberCell(item.points??(rate?R.itemPoints(item):0)),item.note||'',confirmedInRange(task)?'是':'否']);}
@@ -72,11 +72,11 @@ function createReport(tasks,events,{frequency,anchor,generatedAt=Date.now(),unav
   ['工作表','任务明细','一行一个任务，含状态、里程碑时间、贡献力和各阶段耗时'],['工作表','事项明细','一行一个事项，适合分析任务类型、数量和贡献力结构'],['工作表','人员汇总','按截止时设计师归属汇总完成点数、记录计时、容量参考与在手任务；多人协作请结合流转事件'],['工作表','产品维度','按品牌 + 产品名 + 69码汇总需求；同名不同69码分开呈现'],['工作表','状态流转','周期内的原始操作事件，可追溯状态变化'],['工作表','每日趋势','按自然日统计新需求、开始、完成、封存和完成贡献力'],
   ['AI 提示词','人员负荷','先查看数据质量，再比较完成点数和在手点数；计时可能重叠，不据此判定人员真实工时、忙闲或绩效'],['AI 提示词','流程瓶颈','使用任务明细的各阶段耗时与状态流转，找出等待时间最长的阶段、任务类型和人员'],['AI 提示词','需求结构','使用事项明细与产品维度，分析高频产品、事项类型、重复需求以及贡献力构成']
  ];
- infoRows.push(['口径','历史状态','按周期结束或导出时刻（取较早者）保存的版本还原；升级前无法还原的任务单列在数据质量，不混入汇总'],['口径','统计截止',dateCell(cutoff)],['口径','确认时间推定','设计完成或文件修改时间推定的完结记录不计入正式周期完成点数；请先核实'],['口径','计时边界','计时为任务运行历时，可能重叠或跨休息时间，不代表人员实际投入；历史导入/外部编辑计时不完整时留空'],['口径','容量参考','139.2 点/月、32 点/周为排期参考，完成点数/容量是产出比，不是忙闲或绩效结论']);
+ infoRows.push(['口径','历史状态','按周期结束或导出时刻（取较早者）保存的版本还原；负责人对同一完结记录校准的事项与点数应用最新校准，并单列校准时间；升级前无法还原的任务单列在数据质量，不混入汇总'],['口径','统计截止',dateCell(cutoff)],['口径','确认时间推定','设计完成或文件修改时间推定的完结记录不计入正式周期完成点数；请先核实'],['口径','计时边界','计时为任务运行历时，可能重叠或跨休息时间，不代表人员实际投入；历史导入/外部编辑计时不完整时留空'],['口径','容量参考','139.2 点/月、32 点/周为排期参考，完成点数/容量是产出比，不是忙闲或绩效结论']);
  const qualityRows=[['任务ID','需求表文件名','问题','处理'],...unavailable.map(t=>[t.id,t.filename,t.reason,'未混入历史汇总，请核对原始记录']),...selected.filter(t=>!completeTiming(t)||t.completionFromFolder).map(t=>[t.id,t.filename,[!completeTiming(t)?'计时不完整':'',t.completionFromFolder?'确认时间为推定':''].filter(Boolean).join('；'),'计时缺失留空；推定确认不计入周期完成点数'])];
  const sheets=[
   {name:'AI使用说明',rows:infoRows,filter:false},
-  {name:'任务明细',rows:[['任务ID','截止时状态','是否封存','需求时间','导入时间','分配时间','开始设计','提交确认','运营确认','封存时间','品牌','产品名','产品69码','任务名','运营','设计师','事项数','标准贡献力（点）','累计记录计时（小时）','点数/记录计时（非人员效率）','需求至确认（小时）','分配至开始（小时）','开始至确认（小时）','本周期完成','本周期封存','需求表文件名','计时完整性','确认时间来源','版本记录时间'],...taskRows]},
+  {name:'任务明细',rows:[['任务ID','截止时状态','是否封存','需求时间','导入时间','分配时间','开始设计','提交确认','运营确认','封存时间','品牌','产品名','产品69码','任务名','运营','设计师','事项数','标准贡献力（点）','累计记录计时（小时）','点数/记录计时（非人员效率）','需求至确认（小时）','分配至开始（小时）','开始至确认（小时）','本周期完成','本周期封存','需求表文件名','计时完整性','确认时间来源','版本记录时间','点数校准时间'],...taskRows]},
   {name:'事项明细',rows:[['任务ID','任务名','设计师','截止时状态','品牌','产品名','产品69码','事项类型','资产类别','数量','单位','单个贡献力（点）','事项贡献力（点）','事项说明','本周期完成'],...itemRows]},
   {name:'人员汇总',rows:[['人员ID','设计师','周期涉及任务','周期分配任务','周期开工任务','周期完成任务','周期封存任务','完成贡献力（点）','已完成任务累计记录计时（小时）','平均每项贡献力（点）','点数/记录计时（非人员效率）','周期标准容量（点）','完成点数/参考容量','期末在手任务','期末在手贡献力（点）'],...peopleRows]},
   {name:'产品维度',rows:[['品牌','产品名','产品69码','周期涉及任务','周期完成任务','涉及贡献力（点）','完成贡献力（点）','事项类型','设计师'],...productRows]},
