@@ -70,24 +70,31 @@ class RequirementsSync{
   if(this.running)return force?this.running.then(()=>this.check(force,{includeCompleted})):this.running;
   this.running=this.run(force,includeCompleted).finally(()=>{this.running=null});return this.running;
  }
+ checkTask(taskId){
+  // A task action neither waits for nor starts a full-library refresh.
+  // A separate worker keeps the global sync status and cache unchanged.
+  return new RequirementsSync(this.service).run(true,true,taskId);
+ }
  issue(task,message,location){
   const current=this.store.get('task',task.id);if(!current||current.version!==task.version)return false;
   if(current.workbookSyncIssue?.message===message&&current.workbookSyncIssue?.stage===location?.stage)return false;
   current.workbookSyncIssue={message,stage:location?.stage||R.STAGES[task.state],filename:location?.filename||task.filename,at:Date.now()};this.store.put('task',task.id,current);return true;
  }
- async run(force,includeCompleted=false){
+ async run(force,includeCompleted=false,targetId=null){
   let changed=0,discovery={imported:0,relinked:0,repaired:0,issues:[]},assetSync={changed:0,reopened:0,partial:0};const previousError=this.status.error;
   this.status={...this.status,state:'checking',lastAttemptAt:Date.now()};
   try{
-   if(this.service.ensureNasConnection)await this.service.ensureNasConnection(force);
+   if(targetId)await this.nas.ready();
+   else if(this.service.ensureNasConnection)await this.service.ensureNasConnection(force);
    else if(!this.nas.config||!this.nas.lease)throw Error('NAS 未连接，尚未执行检查');
-   discovery=await this.store.exclusive(()=>this.service.scanExisting({includeCompleted}));
+   if(!targetId)discovery=await this.store.exclusive(()=>this.service.scanExisting({includeCompleted}));
+   const target=targetId&&this.store.get('task',targetId);if(targetId&&!target)R.fail('任务不存在',404);
    const locations=[];
    for(let state=0;state<R.STAGES.length;state++){
     const dir=await guarded(this.nas.config.taskRoot,R.STAGES[state]);
-    for(const entry of await fs.readdir(dir,{withFileTypes:true}))if(entry.isFile()&&/\.xlsx$/i.test(entry.name)&&!entry.name.startsWith('~$')&&!entry.name.startsWith('.'))locations.push({state,stage:R.STAGES[state],filename:entry.name});
+    for(const entry of await fs.readdir(dir,{withFileTypes:true}))if(entry.isFile()&&/\.xlsx$/i.test(entry.name)&&!entry.name.startsWith('~$')&&!entry.name.startsWith('.')&&(!target||fileKey(entry.name)===fileKey(target.filename)))locations.push({state,stage:R.STAGES[state],filename:entry.name});
    }
-   for(const task of this.store.all('task')){
+   for(const task of target?[target]:this.store.all('task')){
     if(this.stopped)break;
     if(!includeCompleted&&task.state===4)continue;
     if(task.blocked||this.store.all('job').some(j=>j.status==='prepared'&&j.next?.id===task.id))continue;
@@ -136,13 +143,13 @@ class RequirementsSync{
    }
    this.status={...this.status,scanned:locations.length,error:null};
   }catch(e){this.status={...this.status,error:'NAS 原表同步暂未完成：'+e.message}}
-  if(!this.status.error){
+  if(!targetId&&!this.status.error){
    try{assetSync=await this.service.assets.reconcileMissingAssets({includeCompleted})}
    catch(e){this.status={...this.status,error:'正式资产核对暂未完成：'+e.message}}
   }
   this.status={...this.status,state:this.status.error?'failed':'ready',...(this.status.error?{}:{lastCheckedAt:Date.now()})};
   if(changed||discovery.imported||discovery.relinked||discovery.repaired||assetSync.changed||this.status.error!==previousError||force)this.service.broadcast();
-  else this.service.emit?.('sync-status',this.status);
+  else if(!targetId)this.service.emit?.('sync-status',this.status);
   return {checked:!this.status.error,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }

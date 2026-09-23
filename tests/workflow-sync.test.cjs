@@ -22,8 +22,8 @@ function workbook(){
 async function setup(t){
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'workbook-sync-')),taskRoot=path.join(root,'requests'),assetRoot=path.join(root,'assets');
  await fs.mkdir(taskRoot);await fs.mkdir(assetRoot);const service=await new Service(path.join(root,'db'),{host:'127.0.0.1',port:0}).start();t.after(()=>service.stop());
- await service.call(manager,'configure',{taskRoot,assetRoot});await fs.writeFile(path.join(taskRoot,STAGES[1],filename),workbook());
- let task=await service.importFile(workbook(),filename,{},1,true);
+ await service.call(manager,'configure',{taskRoot,assetRoot});const initialWorkbook=workbook();await fs.writeFile(path.join(taskRoot,STAGES[1],filename),initialWorkbook);
+ let task=await service.importFile(initialWorkbook,filename,{},1,true);
  const pairing=await service.call(manager,'pair-code',{personId:'hong',host:'127.0.0.1'}),client=new Client(decodeCode(pairing.code));await client.pair();t.after(()=>client.close());
  const current=()=>service.store.get('task',task.id),file=()=>service.nas.taskPath(current());
  const edit=async patch=>{const target=file(),bytes=patchWorkbook(await fs.readFile(target),patch);await fs.writeFile(target,bytes);return bytes};
@@ -254,4 +254,24 @@ test('rollback respects stale versions, duplicate originals, workbook locks and 
  await assert.rejects(call(-1),/更新/);const lock=path.join(path.dirname(file()),'~$'+path.basename(file()));await fs.writeFile(lock,'locked');await assert.rejects(call(),/Excel/);assert.equal(current().state,1);await fs.unlink(lock);await service.call(manager,'sync-requirements');
  const duplicate=path.join(service.nas.config.taskRoot,STAGES[2],current().filename);await fs.copyFile(file(),duplicate);await assert.rejects(call(),/多个状态/);assert.equal(current().state,1);await fs.unlink(duplicate);await service.call(manager,'sync-requirements');
  service.store.put('upload','pending',{id:'pending',taskId:current().id,status:'publishing',files:[]});await assert.rejects(call(),/写入或传输/);assert.equal(current().state,1);
+});
+
+test('sealed rollback performs no NAS scan and does not wait for a background scan',async t=>{
+ const {service,current}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
+ const task={...current(),state:4,sealed:true,sealedAt:Date.now(),completedAt:Date.now()};service.store.put('task',task.id,task);
+ const running=service.requirementsSync.running;service.requirementsSync.running=new Promise(()=>{});
+ service.requirementsSync.check=async()=>{throw Error('full scan must not run')};service.requirementsSync.checkTask=async()=>{throw Error('metadata rollback must not read a workbook')};service.nas.ready=async()=>{throw Error('NAS must not be read')};service.assets.reconcileMissingAssets=async()=>{throw Error('archive scan must not run')};
+ try {const started=Date.now();const next=await Promise.race([service.call(manager,'action',{taskId:task.id,version:task.version,action:'rollback',confirmed:true}),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('rollback waited for unrelated scan')),1500);timer.unref()})]);
+ assert.equal(next.sealed,false);assert.equal(next.state,4);assert.equal(next.completedAt,task.completedAt);assert.ok(Date.now()-started<1500);
+ await assert.rejects(service.call(manager,'action',{taskId:task.id,version:task.version,action:'rollback',confirmed:true}));}finally{service.requirementsSync.running=running}
+});
+
+test('stage rollback reads only the selected requirement and leaves global refresh status unchanged',async t=>{
+ const {service,current,file,edit,taskRoot}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
+ const unrelated=path.join(taskRoot,STAGES[4],'26090311-其他品牌-其他产品-王燕-洪华.xlsx');await fs.writeFile(unrelated,'not part of this action');
+ const originalRead=fs.readFile;let reads=0;fs.readFile=async function(target,...args){assert.notEqual(String(target),unrelated);if(String(target)===file())reads++;return originalRead.call(this,target,...args)};t.after(()=>{fs.readFile=originalRead});
+ service.scanExisting=async()=>{throw Error('discovery must not run')};service.assets.reconcileMissingAssets=async()=>{throw Error('archive scan must not run')};service.requirementsSync.check=async()=>{throw Error('full refresh must not run')};
+ const status=structuredClone(service.requirementsSync.status),old=current();await edit({H4:46268,I4:12});
+ await assert.rejects(service.call(manager,'action',{taskId:old.id,version:old.version,action:'rollback',confirmed:true}),/更新/);assert.equal(current().state,2);
+ await service.call(manager,'action',{taskId:old.id,version:current().version,action:'rollback',confirmed:true});assert.equal(current().state,1);assert.ok(reads>0);assert.deepEqual(service.requirementsSync.status,status);
 });

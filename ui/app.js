@@ -356,7 +356,7 @@ document.addEventListener('click',async e=>{
  if(command==='re-pair'){data.requiresPairing=true;render();return}
  if(command==='rollback-open'){
   const target=t.sealed?'待封存':states[t.state-1],description=t.sealed?'撤销完成封存标记，保留已上传文件，可以继续补传。':t.state===4?'撤销运营确认、评分及当前封存关联，原交付文件保留为历史。若需要设计师修改，再回退一次到设计中。':t.state===3?'清除本次提交时间、确认和评分，恢复设计计时。设计师修改后重新提交，运营重新确认。':t.state===2?'停止计时，清除本次开始、提交和确认时间；累计设计耗时保留，设计师可重新开始。':'撤销分配和后续环节记录，需求回到待分配。';
-  openSheet('回退到'+target,'<p class="description">'+esc(taskName(t))+'</p><div class="notice">'+esc(description)+'</div><p class="description">原需求表会同步移动并备份，操作保留历史记录。请先保存并关闭 Excel。</p><div class="sheet-actions">'+button('取消','close-sheet')+button('确认回退到'+target,'rollback-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id,rollbackVersion:t.version},'ROLLBACK');return;
+  openSheet('回退到'+target,'<p class="description">'+esc(taskName(t))+'</p><div class="notice">'+esc(description)+'</div><p class="description">'+(t.sealed?'仅撤销本任务的封存标记，不移动原表、不扫描归档文件。操作保留历史记录。':'只核对并备份当前需求表，再移动到上一环节。请先保存并关闭 Excel。')+'</p><div class="sheet-actions">'+button('取消','close-sheet')+button('确认回退到'+target,'rollback-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id,rollbackVersion:t.version},'ROLLBACK');return;
  }
  if(command==='approve-open'){
   openSheet('确认本次设计已完成','<p class="description">'+esc(taskName(t))+' · '+fmt(points(t))+' 点</p><div class="notice">确认后，原需求表将流转到「5.已完结」，设计师随后上传最终产物封存。</div><label class="check-line"><input id="chat-confirmed" type="checkbox"><span>运营已在聊天中确认完成，由我记录本次确认。</span></label><div class="sheet-actions">'+button('确认完成','approve-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id},'COMPLETE TASK');return;

@@ -218,7 +218,9 @@ class Service extends EventEmitter{
    const task=this.store.get('task',payload.taskId);if(!task)R.fail('任务不存在',404);
    if(payload.action==='rollback')R.manager(actor);
    if(actor.role!=='manager')R.own(actor,task);
-   await this.requirementsSync.check(true,{includeCompleted:task.state===4});
+   if(payload.action==='rollback'){
+    if(!task.sealed){const checked=await this.requirementsSync.checkTask(task.id);if(!checked.checked)R.fail(checked.error||'当前需求表尚未检查完成',409)}
+   }else await this.requirementsSync.check(true,{includeCompleted:task.state===4});
   }
   return this.store.exclusive(async()=>{
    if(actor.role==='designer'&&this.store.get('removedMember',actor.personId))R.fail('你已被移出组织',403);
@@ -263,7 +265,7 @@ class Service extends EventEmitter{
     const old=this.store.get('task',payload.taskId);if(!old)R.fail('任务不存在',404);
     if(payload.action==='assign'&&this.store.get('removedMember',payload.owner))R.fail('该成员已移出组织，不能分配任务');
     if(payload.action==='rollback'){
-     if(old.workbookSyncIssue)R.fail('请先处理原表异常后回退：'+old.workbookSyncIssue.message,409);
+     if(!old.sealed&&old.workbookSyncIssue)R.fail('请先处理原表异常后回退：'+old.workbookSyncIssue.message,409);
      const uploads=this.store.all('upload').filter(u=>u.taskId===old.id&&(u.archiveRound||0)===(old.archiveRound||0));
      if(uploads.some(u=>u.status==='publishing'||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/'))))R.fail('产物正在写入或传输，请等待完成或恢复后再回退',409);
     }
