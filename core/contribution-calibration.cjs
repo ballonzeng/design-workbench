@@ -32,6 +32,7 @@ async function calibrateContribution(service,actor,payload){
   return {...item,...Object.fromEntries(archiveKeys.filter(k=>previous?.[k]!==undefined).map(k=>[k,previous[k]]))};
  });
  // Removed contribution rows must not orphan older per-row archive records.
+ next.ratings=parsed.ratings;
  next.retainedArchiveItems=[...(old.retainedArchiveItems||[]),...old.items.filter(i=>i.assetId&&!next.items.some(n=>n.id===i.id))];
  const at=Date.now(),previousPoints=R.total(old),nextPoints=R.total(next);
  const items=next.items.map(({sealed,sealedAt,assetId,assetPath,productPath,...item})=>item);

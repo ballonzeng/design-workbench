@@ -80,7 +80,10 @@ function transition(task,actor,action,payload={},now=Date.now()){
  const t=structuredClone(task),patch={};
  if(task.blocked)fail('此任务存在未恢复的文件同步，请先在连接与维护中重试');
  if(payload.version!==t.version)fail('任务已更新，请刷新后重试',409);
- const date=dayValues(now),stop=()=>{t.elapsedMs=elapsed(t,now);t.runningSince=null};
+ const date=dayValues(now),stop=()=>{
+  if(t.runningSince){t.workIntervals??=[];t.workIntervals.push({start:t.runningSince,end:now,owner:t.owner});if(!t.timingTracked)t.timingIncomplete=!!t.elapsedMs||!!t.importedTiming||!!t.externalTiming;t.timingTracked=true}
+  t.elapsedMs=elapsed(t,now);t.runningSince=null;
+ };
  switch(action){
   case 'rollback':
    manager(actor);if(t.state===0)fail('已在待分配，不能继续回退',409);
@@ -133,6 +136,7 @@ function transition(task,actor,action,payload={},now=Date.now()){
    t.state=4;t.completedAt=now;t.completedMonth=monthKey(now);t.completionFromFolder=false;t.completionTimeSource='app-confirmed';t.confirmedBy=actor.personId;t.confirmationMethod='负责人记录运营聊天确认';[patch.M4,patch.N4]=date;break;
   default:fail('不支持的任务操作');
  }
+ if(t.runningSince&&!t.timingTracked){t.timingIncomplete=!!t.elapsedMs||!!t.importedTiming||!!t.externalTiming;t.timingTracked=true;t.workIntervals??=[]}
  t.updatedAt=now;t.version++;return {task:t,patch};
 }
 module.exports={PEOPLE,STAGES,CATEGORIES,RATES,normalize,fail,safeName,validCode,rateFor,itemPoints,parts,dayValues,monthKey,stamp,total,elapsed,inferredCategory,own,manager,transition};

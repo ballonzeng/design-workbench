@@ -12,6 +12,7 @@ function hasPublishingUpload(task,uploads){return uploads.some(u=>currentUpload(
 function resetArchive(next,previous,now){
  next.deliveryHistory=[...(previous.deliveryHistory||[]),{at:now,completedAt:previous.completedAt,sealedAt:previous.sealedAt,deliveries:previous.deliveries||[],items:structuredClone([...(previous.items||[]),...(previous.retainedArchiveItems||[])])}];
  delete next.retainedArchiveItems;delete next.contributionCalibration;
+ delete next.ratings;
  next.archiveRound=(previous.archiveRound||0)+1;next.deliveries=[];
  for(const item of next.items){item.sealed=false;for(const key of ['sealedAt','assetId','assetPath','productPath'])delete item[key]}
  next.sealed=false;delete next.sealedAt;delete next.sealedFromVersion;delete next.assetSyncIssue;

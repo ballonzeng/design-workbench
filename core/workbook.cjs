@@ -129,7 +129,8 @@ function parseRequirement(bytes,filename,{categories={},extras={}}={}){
  if(!items.length)fail('需求表未填写有效事项');
  const first=items[0];if(items.some(i=>i.code!==first.code||i.brand!==first.brand||i.product!==first.product))fail('一份需求表需要对应一个产品69码，请将不同产品拆分提交');
  const optionalDate=(a,b)=>{const date=compactText(v(a)),hour=compactText(v(b));if(!date||!hour)return null;try{return dateTime(date,hour)}catch{return null}};
- return {id:crypto.randomUUID(),workbookTaskId:workbookTaskId(wb),filename,title:filenameParts.title,brand:first.brand,workbookBrand:first.workbookBrand,product:first.product,code:first.code,operator,requestedAt,requestedDesigner:designer,items,templateTimes:{assignedAt:optionalDate('E4','F4'),startedAt:optionalDate('H4','I4'),reviewAt:optionalDate('J4','K4'),completedAt:optionalDate('M4','N4')},sourceHash:crypto.createHash('sha256').update(bytes).digest('hex')};
+ const ratings=cellText(v('J5'))==='质量打分'&&cellText(v('K5'))==='时效打分'?{quality:items.map(i=>({row:i.row,value:[60,80,100].includes(Number(cellText(v('J'+i.row))))?Number(cellText(v('J'+i.row))):null})),timeliness:['满意','不满'].includes(cellText(v('K6')))?cellText(v('K6')):null}:null;
+ return {id:crypto.randomUUID(),workbookTaskId:workbookTaskId(wb),filename,title:filenameParts.title,brand:first.brand,workbookBrand:first.workbookBrand,product:first.product,code:first.code,operator,requestedAt,requestedDesigner:designer,items,ratings,templateTimes:{assignedAt:optionalDate('E4','F4'),startedAt:optionalDate('H4','I4'),reviewAt:optionalDate('J4','K4'),completedAt:optionalDate('M4','N4')},sourceHash:crypto.createHash('sha256').update(bytes).digest('hex')};
 }
 const ALLOWED=new Set(['E4','F4','G4','H4','I4','J4','K4','L4','M4','N4']);
 const escapeXml=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');

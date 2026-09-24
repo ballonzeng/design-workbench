@@ -41,3 +41,7 @@ test('desktop unknown commands and untrusted renderer sources never reach either
   await assert.rejects(desktop.invoke('calibrate-contribution',{}, {sender:{},senderFrame:{}}),/无效来源/);assert.equal(desktop.calls.length,0);
  }
 });
+
+test('calendar preview and save pass the desktop allowlist for local and remote managers',async()=>{
+ for(const remote of [false,true])for(const command of ['work-calendar-preview','work-policy-save']){const desktop=desktopRouter(remote),payload={month:'2026-09',revision:0};assert.equal((await desktop.invoke(command,payload)).ok,true);assert.equal(desktop.calls[0].command,command);assert.equal(desktop.calls[0].transport,remote?'remote':'local')}
+});

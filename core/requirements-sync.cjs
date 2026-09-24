@@ -46,8 +46,10 @@ function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  next.filename=location.filename;next.title=parsed.title;next.brand=parsed.brand;next.workbookBrand=parsed.workbookBrand;next.operator=parsed.operator;next.requestedDesigner=parsed.requestedDesigner;next.state=state;next.owner=owner;
  next.workbookTaskId=parsed.workbookTaskId||old.workbookTaskId||null;
  if(itemsChanged)next.items=parsed.items;
+ next.ratings=state===4?parsed.ratings:null;
  next.workflowFields=fields;next.workbookHash=parsed.sourceHash;next.workbookSyncIssue=null;next.externalSyncedAt=now;
  if(moved||assigned){
+  if(old.runningSince&&old.timingTracked){next.workIntervals=[...(old.workIntervals||[]),{start:old.runningSince,end:now,owner:old.owner}]}
   next.elapsedMs=R.elapsed(old,now);next.runningSince=null;next.pauseReason=null;
   next.startedAt=state>=2?(times.startedAt||old.startedAt||now):null;
   next.reviewAt=state>=3?(times.reviewAt||now):null;

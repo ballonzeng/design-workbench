@@ -5,6 +5,7 @@ const {RequirementsSync,reconcileTask,itemsIdentity}=require('./requirements-syn
 const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
+const W=require('./work-calendar.cjs');
 const requestIdentity=task=>JSON.stringify([task.requestedAt,task.code,R.normalize(task.product)]);
 class Service extends EventEmitter{
  constructor(dir,{identity=null,saveIdentity=null,host='0.0.0.0',port=47831}={}){
@@ -85,7 +86,9 @@ class Service extends EventEmitter{
  snapshot(actor){
   const tasks=this.store.all('task').filter(t=>!(t.state<4&&!t.sealed&&t.workbookSyncIssue?.message==='五个状态文件夹内未找到原需求表，请检查是否被移动或改名')).filter(t=>actor.role==='manager'||t.owner===actor.personId&&t.state>0).sort((a,b)=>(a.state===0?0:1)-(b.state===0?0:1)||(b.updatedAt-a.updatedAt));
   const nasStatus={connected:!!this.nas.lease&&!this.nas.error&&!this.startError,error:this.startError||this.nas.error};
-  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime:Date.now(),tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:139.2,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,
+  const serverTime=Date.now(),workPolicies=this.store.get('setting','workPolicies')||{},month=R.monthKey(serverTime),range=require('./report.cjs').periodRange('month',month+'-01'),monthlyCalendar=W.capacity(range.start,range.end,workPolicies,serverTime);
+  for(const task of tasks){const timing=W.taskTiming(task,0,serverTime,workPolicies);task.effectiveElapsedMs=timing.hours*3600000;task.effectiveTimingComplete=timing.complete}
+  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,
    ...(actor.role==='manager'?{config:this.nas.config||this.store.get('setting','nas'),port:this.port,jobs:this.store.all('job').filter(j=>j.status==='prepared').map(j=>({id:j.id,taskId:j.next?.id,error:j.error||'等待恢复'})),importIssues:this.store.get('setting','importIssues')||[],events:this.store.recent(30)}:{})};
  }
  async importFile(bytes,filename,options={},state=0,existing=false){
@@ -192,7 +195,18 @@ class Service extends EventEmitter{
   if(actor.role==='designer'&&this.store.get('removedMember',actor.personId))R.fail('你已被移出组织',403);
   if(!['manager','designer'].includes(actor.role)||!R.PEOPLE.some(p=>p.id===actor.personId))R.fail('无效账号',403);
   if(actor.tokenHash&&['configure','manager-pair-code','manager-revoke'].includes(command))R.fail('请在负责人主机上执行此操作',403);
-  if(command==='report-data'){R.manager(actor);const {periodRange}=require('./report.cjs'),range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));return {tasks:history.tasks,events:this.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),generatedAt,unavailable:history.unavailable}}
+  if(command==='work-calendar-preview'){
+   R.manager(actor);if(typeof payload.month!=='string'||!W.validDate(payload.month+'-01'))R.fail('请选择有效月份');
+   const policies={...(this.store.get('setting','workPolicies')||{})},savedPolicy=W.policyFor(payload.month,policies);
+   if(payload.policy)policies[payload.month]=W.validatePolicy(payload.policy);
+   const range=require('./report.cjs').periodRange('month',payload.month+'-01');
+   return {calendar:W.capacity(range.start,range.end,policies,Date.now()),policy:policies[payload.month]||savedPolicy};
+  }
+  if(command==='work-policy-save'){
+   R.manager(actor);if(typeof payload.month!=='string'||!W.validDate(payload.month+'-01'))R.fail('请选择生效月份');
+   const policy=W.validatePolicy(payload.policy);return this.store.exclusive(()=>{const revision=this.store.get('setting','workPolicyRevision')||0;if(payload.revision!==revision)R.fail('工作日规则已更新，请重新打开后修改',409);const policies=this.store.get('setting','workPolicies')||{};this.store.atomic(()=>{policies[payload.month]=policy;this.store.put('setting','workPolicies',policies);this.store.put('setting','workPolicyRevision',revision+1);this.store.event('work-policy-updated',actor.personId,null,{month:payload.month,policy,revision:revision+1})});this.broadcast();return {saved:true,revision:revision+1}});
+  }
+  if(command==='report-data'){R.manager(actor);const {periodRange}=require('./report.cjs'),range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));return {tasks:history.tasks,events:this.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),generatedAt,unavailable:history.unavailable,workPolicies:this.store.get('setting','workPolicies')||{},removedPeople:this.store.removedMembers()}}
   if(command==='snapshot')return this.snapshot(actor);
   if(command==='product-groups'&&!payload.force&&this.products.indexReady()){R.manager(actor);return this.products.all()}
   if(command==='sync-requirements'){if(payload.includeCompleted)R.manager(actor);return this.requirementsSync.check(true,{includeCompleted:!!payload.includeCompleted})}

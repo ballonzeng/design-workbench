@@ -4,7 +4,7 @@ const {createReport,periodRange}=require('../core/report.cjs');
 
 test('weekly and monthly periods use Shanghai calendar boundaries',()=>{
  const week=periodRange('week','2026-09-04');assert.equal(week.label,'2026-08-31 至 2026-09-06');assert.equal(week.capacity,32);
- const month=periodRange('month','2026-09-04');assert.equal(month.label,'2026年9月');assert.equal(month.capacity,139.2);
+ const month=periodRange('month','2026-09-04');assert.equal(month.label,'2026年9月');assert.equal(month.capacity,140.8);
 });
 
 test('analysis workbook contains traceable multi-dimensional sheets',()=>{

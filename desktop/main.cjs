@@ -130,7 +130,7 @@ async function uploadOne(payload){
   const result=await client.rpc('archive-commit',{uploadId:batch.id});chosen.delete(payload.selectionId);await refresh();return result;
  }finally{uploading=false}
 }
- const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan']);
+ const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan','work-policy-save','work-calendar-preview']);
 async function handle(command,payload){
  if(!COMMANDS.has(command))throw Error('不支持的操作');
  if(command==='snapshot')return refresh();
@@ -174,11 +174,11 @@ async function handle(command,payload){
    if(role!=='manager')throw Error('仅负责人可以导出分析数据');
    if(!service&&!client)throw Error('负责人数据服务尚未启动');
    const range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),cutoff=Math.min(generatedAt,range.end-1),remote=settings.remoteManager?await invoke('report-data',payload):null,history=remote||service.store.reportTasks(cutoff);
-   const report=createReport(history.tasks,remote?remote.events:service.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),{frequency:payload.frequency,anchor:payload.anchor,generatedAt,unavailable:history.unavailable});
-   const filename='设计协作数据-'+report.range.fileKey+'.xlsx';
-   const saveResult=await dialog.showSaveDialog(win,{title:'导出多维数据表',defaultPath:path.join(app.getPath('documents'),filename),filters:[{name:'Excel 工作簿',extensions:['xlsx']}]});
+   const report=createReport(history.tasks,remote?remote.events:service.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),{frequency:payload.frequency,anchor:payload.anchor,generatedAt:remote?.generatedAt||generatedAt,unavailable:history.unavailable,workPolicies:remote?remote.workPolicies||{}:service.store.get('setting','workPolicies')||{},removedPeople:remote?remote.removedPeople||[]:service.store.removedMembers()});
+   const filename='设计协作数据-'+report.range.fileKey+'.zip';
+   const saveResult=await dialog.showSaveDialog(win,{title:'导出分析包',defaultPath:path.join(app.getPath('documents'),filename),filters:[{name:'分析包（Excel、JSON、提示词与校验脚本）',extensions:['zip']}]});
    if(saveResult.canceled||!saveResult.filePath)return null;
-   await fsp.writeFile(saveResult.filePath,report.bytes,{flag:'w'});
+   await fsp.writeFile(saveResult.filePath,report.bundleBytes,{flag:'w'});
    return {path:saveResult.filePath,label:report.range.label,counts:report.counts};
   }
  if(command==='asset-pick'||command==='asset-replan')return selectFiles(payload);
@@ -222,9 +222,10 @@ else{
  app.on('second-instance',show);
  app.whenReady().then(async()=>{
   await load();
-  win=new BrowserWindow({width:1360,height:940,minWidth:820,minHeight:640,show:false,title:name+' · Design by Mason Zeng',icon:iconFile,backgroundColor:'#f5f5f7',titleBarStyle:'hidden',titleBarOverlay:{color:'#f5f5f7',symbolColor:'#626975',height:42},webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false,webSecurity:true}});
+  win=new BrowserWindow({width:1360,height:940,minWidth:820,minHeight:640,show:false,title:name+' · Design by Mason Zeng',icon:iconFile,backgroundColor:'#f5f5f7',frame:false,titleBarStyle:'hidden',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false,webSecurity:true}});
+  require('../core/window-chrome.cjs')(win,ipcMain);
   session.defaultSession.setPermissionRequestHandler((_w,_p,callback)=>callback(false));session.defaultSession.setPermissionCheckHandler(()=>false);
-  const allowed=new Set(['index.html','app.js','style.css','bridge.js','calendar.js','vendor/lucide.min.js'].map(f=>pathToFileURL(path.join(appDir,'ui',f)).href));for(const icon of ['icon.png','icon-manager.png','icon-designer.png'])allowed.add(pathToFileURL(path.join(appDir,'assets',icon)).href);
+  const allowed=new Set(['index.html','app.js','style.css','bridge.js','calendar.js','chrome.js','vendor/lucide.min.js'].map(f=>pathToFileURL(path.join(appDir,'ui',f)).href));for(const icon of ['icon.png','icon-manager.png','icon-designer.png'])allowed.add(pathToFileURL(path.join(appDir,'assets',icon)).href);
   session.defaultSession.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!allowed.has(details.url)}));
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(e,url)=>{if(url!==appURL)e.preventDefault()});win.webContents.on('will-attach-webview',e=>e.preventDefault());
   ipcMain.handle('workbench:call',async(event,command,payload)=>{if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||event.senderFrame.url!==appURL)throw Error('无效来源');try{return {ok:true,value:await handle(command,payload||{})}}catch(e){return {ok:false,error:e.reasons?.join('；')||e.message}}});

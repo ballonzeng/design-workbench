@@ -12,13 +12,14 @@ class Store{
  }
  get(kind,id){const r=this.db.prepare('SELECT body FROM records WHERE kind=? AND id=?').get(kind,id);return r?JSON.parse(r.body):null}
  all(kind){return this.db.prepare('SELECT body FROM records WHERE kind=?').all(kind).map(r=>JSON.parse(r.body))}
+ removedMembers(){return this.db.prepare('SELECT id,body FROM records WHERE kind=?').all('removedMember').map(r=>({...JSON.parse(r.body),personId:r.id}))}
  put(kind,id,body){
   if(kind==='task'&&!this.inAtomic)return this.atomic(()=>this.put(kind,id,body));
   this.db.prepare('INSERT INTO records(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body').run(kind,id,JSON.stringify(body));
   if(kind==='task')this.saveTaskVersion({...body,id});
  }
  saveTaskVersion(task){
-  const fields=['id','state','sealed','requestedAt','createdAt','assignedAt','startedAt','reviewAt','completedAt','completedMonth','sealedAt','brand','product','code','title','operator','owner','items','elapsedMs','runningSince','filename','importedTiming','externalTiming','completionFromFolder','completionTimeSource','archiveRound'];
+  const fields=['id','state','sealed','requestedAt','createdAt','assignedAt','startedAt','reviewAt','completedAt','completedMonth','sealedAt','brand','product','code','title','operator','owner','items','elapsedMs','runningSince','filename','importedTiming','externalTiming','completionFromFolder','completionTimeSource','archiveRound','workIntervals','timingTracked','timingIncomplete','ratings'];
   const body=JSON.stringify(Object.fromEntries(fields.filter(k=>task[k]!==undefined).map(k=>[k,task[k]])));
   const previous=this.db.prepare('SELECT body FROM task_versions WHERE taskId=? ORDER BY seq DESC LIMIT 1').get(task.id);
   if(previous?.body!==body)this.db.prepare('INSERT INTO task_versions(taskId,at,body) VALUES(?,?,?)').run(task.id,Date.now(),body);

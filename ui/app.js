@@ -52,24 +52,45 @@ function personSummary(p){
  return {tasks,active,done,waiting,running,queued,paused,score,doneScore,free:!running&&!queued&&!paused,label:running?'正在设计':queued?'有待做任务':paused?'设计已暂停':active.some(t=>t.state===3)?'等待确认 · 可接任务':'可接新任务'};
 }
 function personCard(p,index){
- const s=personSummary(p),capacity=data.monthlyCapacity||139.2,remaining=capacity-s.doneScore-s.score,ratio=Math.min(100,s.doneScore/capacity*100),activeRatio=Math.min(100-ratio,s.score/capacity*100);
+ const s=personSummary(p),capacity=data.monthlyCapacity??0,remaining=capacity-s.doneScore-s.score,ratio=Math.min(100,(capacity?s.doneScore/capacity*100:0)),activeRatio=Math.min(100-ratio,(capacity?s.score/capacity*100:0));
  return '<article class="person-card" data-load="'+(s.running?'busy':s.queued||s.paused?'queued':'available')+'"><div class="person-state"><span class="status-dot"></span>'+s.label+'</div><div class="person-head"><span class="avatar a'+index%8+'">'+esc(p.name.slice(-2))+'</span><div class="person-name"><h3>'+esc(p.name)+'<small>'+esc(p.title)+'</small></h3><p><span class="status-dot '+(p.online?'online':'')+'"></span>'+(p.online?'设计端在线':p.paired?'设计端离线':'尚未连接设备')+'</p></div></div><div class="person-score-row"><div><div class="point-display">'+fmt(s.score)+'<small>点</small></div><div class="metric-caption">在手贡献力</div></div><span class="metric-divider"></span><div><div class="task-count">'+s.active.length+'<small>项</small></div><div class="metric-caption">在手任务</div></div></div><div class="status-counts">'+[1,2,3].map(state=>'<span><i class="s'+state+'"></i>'+states[state]+'<b>'+s.active.filter(t=>t.state===state).length+'</b></span>').join('')+'</div><div class="capacity"><div class="capacity-labels"><span>本月完成 <b>'+fmt(s.doneScore)+' 点</b></span><span>月度基准 '+fmt(capacity)+' 点</span></div><div class="capacity-track" aria-label="本月已完成 '+fmt(s.doneScore)+' 点，在手 '+fmt(s.score)+' 点"><span class="capacity-done" style="width:'+ratio+'%"></span><span class="capacity-active" style="width:'+activeRatio+'%"></span></div><div class="capacity-note"><span>'+(remaining>=0?'参考余量 '+fmt(remaining)+' 点':'超出月度基准 '+fmt(-remaining)+' 点')+'</span><span>待封存 '+s.waiting.length+' 项</span></div></div><div class="person-footer"><button class="button quiet small" data-command="pair-person" data-person="'+p.id+'">'+icon('monitor')+'连接设备</button><button class="button quiet small arrow-link" data-command="person-tasks" data-person="'+p.id+'">查看任务'+icon('arrow-up-right')+'</button></div></article>';
 }
+function calendarSummary(){const c=data.monthlyCalendar;return '<div class="calendar-summary"><div><strong>本月目标 '+fmt(data.monthlyCapacity??0)+' 点 / 人</strong><p>'+(c?c.workdays+' 个工作日 · '+fmt(c.hours)+' 小时 · 截至现在 '+fmt(c.elapsedPoints)+' 点'+(c.verified?'':' · 节假日未核实，仅为暂估'):'请升级负责人主机以读取工作日规则')+'</p></div>'+button('工作日与目标设置','work-policy-open')+'</div>'}
+function teamMetric(kind){
+ const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>p.title==='设计师'&&!p.removed&&personSummary(p).free),titles=['在手任务','在手贡献力','可接新任务'];
+ const rows=kind===2?free.map(p=>'<button class="drill-row" data-command="person-tasks" data-person="'+p.id+'"><span><strong>'+esc(p.name)+'</strong><small>'+esc(personSummary(p).label)+'</small></span>'+icon('arrow-up-right')+'</button>'):active.sort((a,b)=>kind===1?points(b)-points(a):a.state-b.state).map(t=>'<button class="drill-row" data-command="task-detail" data-task="'+esc(t.id)+'"><span><strong>'+esc(taskName(t))+'</strong><small>'+esc(t.brand)+' · '+esc(peopleName(t.owner))+' · '+states[t.state]+'</small></span><b>'+fmt(points(t))+' 点</b></button>');
+ openSheet(titles[kind]+'明细','<p class="description">'+(kind===2?'只包含当前没有待做、设计中或暂停任务的设计师；仍需结合实际安排。':'包含待设计、设计中和待确认的任务，共 '+active.length+' 项，'+fmt(active.reduce((n,t)=>n+points(t),0))+' 点。')+'</p>'+ (rows.join('')||'<p class="notice">暂无匹配记录</p>'),{},'TEAM DETAILS');
+}
+function policyInput(){const sessions=$('#work-sessions').value.split(/[,，\n]+/).map(v=>v.trim()).filter(Boolean).map(v=>v.split('-').map(x=>x.trim()));return {dailyPoints:Number($('#work-points').value),sessions,exceptions:{...dialogContext.policyExceptions}}}
+function drawPolicyCalendar(c){
+ dialogContext.calendar=c;const exceptions=dialogContext.policyExceptions,firstDay=new Date(c.days[0].date+'T12:00:00Z').getUTCDay(),offset=(firstDay+6)%7;
+ $('#work-calendar').innerHTML='<div class="work-calendar-grid">'+['一','二','三','四','五','六','日'].map(d=>'<span class="work-weekday">'+d+'</span>').join('')+'<span></span>'.repeat(offset)+c.days.map(d=>'<button type="button" class="work-day '+(d.working?'working':'resting')+(Object.hasOwn(exceptions,d.date)?' overridden':'')+'" data-command="work-day" data-date="'+d.date+'" aria-pressed="'+(dialogContext.selectedDate===d.date)+'" aria-label="'+d.date+' '+d.reason+' '+(d.working?'上班':'休息')+'，点击切换"><strong>'+Number(d.date.slice(-2))+'</strong><small>'+(d.reason==='调休上班'?'调休上班':d.reason==='法定放假安排'?'放假':d.working?'上班':'休息')+'</small>'+(Object.hasOwn(exceptions,d.date)?'<i>已调整</i>':'')+'</button>').join('')+'</div>';
+ $('#work-calendar-total').textContent=c.workdays+' 个工作日 · '+fmt(c.hours)+' 有效小时 · '+fmt(c.points)+' 目标点数'+(c.verified?'':'（未核实年份，暂估）');
+ $('#work-calendar-selected').textContent=dialogContext.selectedDate?dialogContext.selectedDate+' · '+c.days.find(d=>d.date===dialogContext.selectedDate)?.reason:'点击日期切换上班／休息；标注“已调整”的日期为你的手动设置。';
+ $('#work-day-restore').disabled=!dialogContext.selectedDate||!Object.hasOwn(exceptions,dialogContext.selectedDate);
+}
+async function previewPolicy(){const context=dialogContext;if(!context?.policyExceptions)return;const token=context.previewToken=(context.previewToken||0)+1;const save=$('#sheet [data-command="work-policy-save"]');save.disabled=true;try{const result=await api('work-calendar-preview',{month:$('#work-month').value,policy:policyInput()});if(dialogContext===context&&context.previewToken===token){drawPolicyCalendar(result.calendar);save.disabled=false;$('#sheet-error').hidden=true}}catch(e){if(dialogContext===context&&context.previewToken===token)errorBox(e.message)}}
+function workPolicySheet(){const p=data.workPolicy||{dailyPoints:6.4,sessions:[['09:00','12:00'],['13:00','18:00']],exceptions:{}};
+ openSheet('工作日与目标日历','<p class="description">点击日期切换上班／休息；已含 2026 年法定放假及调休。</p><label class="field work-month-row"><span>选择月份</span><input id="work-month" type="month" value="'+month()+'"></label><div id="work-calendar-total" class="notice">正在计算…</div><div id="work-calendar"></div><p id="work-calendar-selected" class="description"></p><div class="calendar-actions"><button class="button small" id="work-day-restore" data-command="work-day-restore" disabled>恢复选中日期的法定安排</button>'+button('清除本月手动调整','work-month-restore')+'</div><details class="work-policy-details"><summary>目标点数与有效时段</summary><label class="field"><span>每日目标点数（默认 32 点/周 ÷ 5）</span><input id="work-points" type="number" min="0.01" max="1000" step="0.01" value="'+p.dailyPoints+'"></label><label class="field"><span>有效工作时段（逗号分隔，空档不计时）</span><input id="work-sessions" value="'+esc(p.sessions.map(a=>a.join('-')).join(', '))+'"></label><p class="description">新规则从所选月份生效，直到之后有新规则。重新导出的报告附规则快照；请假与任职目标尚未折算。</p></details><div class="sheet-actions">'+button('取消','close-sheet')+button('保存日历与目标','work-policy-save','',true)+'</div>',{policyRevision:data.workPolicyRevision||0,policyExceptions:{...p.exceptions},policyMonth:month(),policyDrafts:{}},'WORK CALENDAR');
+ $('#sheet').dataset.wide='true';$('#sheet').dataset.workCalendar='true';previewPolicy();
+}
+
 function teamPage(){
- const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>!p.removed&&personSummary(p).free).length;
+ const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>!p.removed&&p.title==='设计师'&&personSummary(p).free).length;
  return heading('团队负荷','先看每个人手上的工作，再安排下一项任务。',button(icon('refresh-cw')+'同步需求','scan','',false,!connected()),'TEAM OVERVIEW')+
  '<div class="overview">'+[
  ['在手任务',active.length,'项','layers-2'],['在手贡献力',fmt(active.reduce((n,t)=>n+points(t),0)),'点','chart-no-axes-column-increasing'],['可接新任务',free,'人','users-round']
- ].map(([title,value,unit,i])=>'<div class="overview-item"><div><div class="overview-label">'+title+'</div><div class="overview-number">'+value+'<small>'+unit+'</small></div></div><span class="overview-icon">'+icon(i)+'</span></div>').join('')+'</div>'+
- '<div class="section-heading"><h2>人员看板 <span> / '+data.people.length+' 人</span></h2><span>'+month().replace('-',' 年 ')+' 月 · '+fmt(data.monthlyCapacity||139.2)+' 点 / 人</span></div>'+
+ ].map(([title,value,unit,i],index)=>'<button type="button" class="overview-item" data-command="team-metric" data-metric="'+index+'" aria-label="查看'+title+'明细"><div><div class="overview-label">'+title+'</div><div class="overview-number">'+value+'<small>'+unit+'</small></div></div><span class="overview-icon">'+icon(i)+'</span></button>').join('')+'</div>'+calendarSummary()+
+ '<div class="section-heading"><h2>人员看板 <span> / '+data.people.filter(p=>!p.removed&&p.title==='设计师').length+' 人</span></h2><span>'+month().replace('-',' 年 ')+' 月 · '+fmt(data.monthlyCapacity??0)+' 点 / 人</span></div>'+
  (!data.nasStatus?.connected?'<div class="notice">连接现有 NAS 后，导入这五个文件夹中的需求。'+button('连接 NAS','settings-shortcut','',false,false)+'</div>':'')+
- '<div class="people-grid">'+data.people.filter(p=>!p.removed).map(personCard).join('')+'</div>';
+ '<div class="people-grid">'+data.people.filter(p=>!p.removed&&p.title==='设计师').map(personCard).join('')+'</div>';
 }
 function timing(t){
  if(t.state===0)return '等待负责人分配';
  if(t.state===1)return '分配于 '+dateTime(t.assignedAt);
- if(t.state===2)return (t.runningSince?'已设计 ':'已暂停 · 累计 ')+timeText(elapsed(t))+(t.pauseReason?' · '+esc(t.pauseReason):'');
- if(t.state===3)return '等待确认 '+timeText(now()-t.reviewAt)+' · 累计设计 '+timeText(elapsed(t));
+ if(t.state===2&&t.effectiveTimingComplete)return '有效设计 '+timeText(t.effectiveElapsedMs)+(t.runningSince?' · 计时中（同步时更新）':' · 已暂停');
+ if(t.state===2)return (t.runningSince?'原始计时 ':'已暂停 · 累计 ')+timeText(elapsed(t))+(t.pauseReason?' · '+esc(t.pauseReason):'');
+ if(t.state===3)return '等待确认 '+timeText(now()-t.reviewAt)+' · 原始计时 '+timeText(elapsed(t));
  return '确认于 '+dateTime(t.completedAt);
 }
 function taskActions(t){
@@ -130,7 +151,7 @@ function productsPage(){
 }
 function reportsPage(){
  return heading('数据分析导出','按周或按月生成结构化 Excel，直接交给 AI 做人员、任务、产品和流程分析。','','ANALYTICS EXPORT')+
- '<div class="report-hero"><div class="report-hero-icon">'+icon('sparkles')+'</div><div><h2>一个文件，保留分析所需的完整上下文</h2><p>包含任务明细、事项明细、人员汇总、产品维度、状态流转和每日趋势。每张表都使用固定字段，便于 AI 交叉核对。</p><div class="dimension-chips"><span>人员</span><span>任务</span><span>事项</span><span>产品</span><span>状态</span><span>时间</span></div></div></div>'+
+ '<div class="report-hero"><div class="report-hero-icon">'+icon('sparkles')+'</div><div><h2>可核对的数据，直接交给分析 Agent</h2><p>导出包包含 Excel、数据 JSON、报告摘要和分析提示词。先核对口径与数据质量，再分析目标进度、等待环节、需求结构及运营评分。</p><div class="dimension-chips"><span>人员</span><span>任务</span><span>事项</span><span>产品</span><span>状态</span><span>时间</span></div></div></div>'+
  '<div class="report-grid"><article class="report-card"><span class="report-icon week">'+icon('calendar-days')+'</span><p class="eyebrow">WEEKLY</p><h2>周度数据表</h2><p>按周一至周日统计工作量和流程变化；缺少历史版本的任务会单独注明。</p>'+button('选择周并导出'+icon('arrow-up-right'),'report-open','data-frequency="week"',true)+'</article><article class="report-card"><span class="report-icon month">'+icon('calendar-range')+'</span><p class="eyebrow">MONTHLY</p><h2>月度数据表</h2><p>按自然月统计，适合复盘产出结构、贡献力分布、高频产品和长期流程问题。</p>'+button('选择月份并导出'+icon('arrow-up-right'),'report-open','data-frequency="month"',true)+'</article></div>'+
  '<div class="report-note">'+icon('shield-check')+'<div><strong>截止状态与缺失数据均有说明</strong><p>按统计截止时的版本导出，后续修改不会倒灌历史。升级前无法还原的任务、推定确认时间和不完整计时会列入数据质量页。</p></div></div>';
 }
@@ -184,23 +205,19 @@ function render({animate=false}={}){
  main.classList.toggle('page-enter',!manager()&&animate&&lastInput==='pointer');icons();window.scrollTo({top:scroll,behavior:'instant'});
  if(manager()&&animate&&lastInput==='pointer'&&!matchMedia('(prefers-reduced-motion:reduce)').matches){
   const parts=[...main.querySelectorAll('.page-heading,.overview,.section-heading,.person-card,.task-card,.list-tools,.settings-card,.report-card,.product-group')].filter(el=>el.getBoundingClientRect().top<innerHeight).slice(0,9);
-  for(const [index,el] of parts.entries())el.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'translateY(0)'}],{duration:200,delay:Math.min(index*12,72),easing:'cubic-bezier(0.23,1,0.32,1)',fill:'backwards'});
+  for(const [index,el] of parts.entries())el.animate([{opacity:.5},{opacity:1}],{duration:200,delay:Math.min(index*12,72),easing:'cubic-bezier(0.23,1,0.32,1)',fill:'backwards'});
  }
  if(focusId&&['task-search','asset-search','product-search'].includes(focusId)){const input=document.getElementById(focusId);input?.focus({preventScroll:true});input?.setSelectionRange(selection,selection)}
 }
 async function navigate(next){view=next;filter='all';person=null;query='';render({animate:true});window.scrollTo({top:0,behavior:'instant'});if(pageLoads[next])await loadPage(next)}
 function moveSheet(open){
- const dialog=$('#sheet'),reduced=matchMedia('(prefers-reduced-motion:reduce)').matches||(manager()&&lastInput==='keyboard');
- const presentation=getComputedStyle(dialog),fromX=dialog.open?(new DOMMatrixReadOnly(presentation.transform).m41||0):36,fromOpacity=dialog.open?Number(presentation.opacity):0;
- sheetMotion?.cancel();
- if(open&&!dialog.open)dialog.showModal();
- if(reduced){dialog.style.transform='none';dialog.style.opacity='1';if(!open)dialog.close();return}
- const targetX=open?0:36,targetOpacity=open?1:0,frames=[];
- for(let i=0;i<=30;i++){const t=i/30*.4,w=24,s=1-(1+w*t)*Math.exp(-w*t);frames.push({transform:'translateX('+(fromX+(targetX-fromX)*s)+'px)',opacity:fromOpacity+(targetOpacity-fromOpacity)*s,offset:i/30})}
- frames[30]={transform:'translateX('+targetX+'px)',opacity:targetOpacity,offset:1};
- sheetMotion=dialog.animate(frames,{duration:open?(manager()?280:320):220,fill:'both'});
- const current=sheetMotion;current.onfinish=()=>{if(sheetMotion!==current)return;if(!open)dialog.close();current.cancel();dialog.style.transform='none';dialog.style.opacity='1'};
+ const dialog=$('#sheet');sheetMotion?.cancel();sheetMotion=null;
+ if(!open){dialog.close();return}
+ const wasOpen=dialog.open;if(!wasOpen)dialog.showModal();dialog.style.transform='none';dialog.style.opacity='1';
+ // Keep the shell and its rounded clipping stable, including nested sheet changes.
+ if(!wasOpen&&!matchMedia('(prefers-reduced-motion:reduce)').matches)sheetMotion=$('#sheet-body').animate([{opacity:.5},{opacity:1}],{duration:140});
 }
+
 function arrangeSheet(){
  const body=$('#sheet-body'),footer=$('#sheet-footer');
  if(body.querySelector(':scope > .sheet-actions'))footer.replaceChildren();
@@ -210,8 +227,8 @@ function arrangeSheet(){
 }
 function openSheet(title,content,context={},eyebrow='设计协作'){
  const parent=dialogContext;
- if(eyebrow!=='TASK DETAILS'&&context.taskId===parent?.taskId&&(parent.kind==='detail'||parent.returnTaskId))context.returnTaskId=parent.taskId;
- $('#sheet').dataset.selected='false';$('#sheet').dataset.preview='false';$('#sheet-footer').innerHTML='';$('#sheet-back').hidden=!context.returnTaskId;
+ if(parent&&context.taskId&&eyebrow!=='TASK DETAILS'&&context.taskId===parent.taskId&&(parent.kind==='detail'||parent.returnTaskId))context.returnTaskId=parent.taskId;
+ $('#sheet').dataset.workCalendar='false';$('#sheet').dataset.selected='false';$('#sheet').dataset.preview='false';$('#sheet-footer').innerHTML='';$('#sheet-back').hidden=!context.returnTaskId;
  $('#sheet').dataset.wide=['ARCHIVE','CALIBRATE CONTRIBUTION'].includes(eyebrow)?'true':'false';
  if(eyebrow==='TASK DETAILS')context.kind='detail';
  const issueTask=data.tasks.find(t=>t.id===context.taskId),issue=taskIssue(issueTask);
@@ -236,7 +253,7 @@ async function pairPerson(id){
 function importSheet(){openSheet('上传需求','<p class="description">选择填写完成的公司需求表。</p><button class="upload-pick" data-command="draft-pick">'+icon('file-up')+'选择 Excel 需求表</button><div id="draft-summary"></div><div class="sheet-actions">'+button('上传需求','import-submit','disabled',true)+'</div>',{},'NEW REQUEST')}
 function reportSheet(frequency){
  const weekly=frequency==='week',today=new Date(now()+8*3600000).toISOString().slice(0,10);
- openSheet(weekly?'导出周度数据表':'导出月度数据表','<p class="description">'+(weekly?'选择这一周内的任意一天，系统会自动按周一至周日统计。':'选择目标月份内的任意一天，系统会自动统计整个自然月。')+'</p><label class="field"><span>'+(weekly?'选择周':'选择月份')+'</span><button type="button" class="calendar-trigger" data-calendar="report" data-mode="'+(weekly?'week':'month')+'" id="report-anchor" value="'+today+'">'+today+icon('calendar-days')+'</button></label><div class="report-sheet-list"><span>'+icon('table-2')+'7 个结构化工作表</span><span>'+icon('bot')+'附带 AI 分析口径与提示词</span><span>'+icon('list-filter')+'表头冻结并支持筛选</span></div><div class="sheet-actions">'+button(icon('file-down')+'导出 Excel','report-export','',true)+'</div>',{frequency},'EXPORT DATA');
+ openSheet(weekly?'导出周度数据表':'导出月度数据表','<p class="description">'+(weekly?'选择这一周内的任意一天，系统会自动按周一至周日统计。':'选择目标月份内的任意一天，系统会自动统计整个自然月。')+'</p><label class="field"><span>'+(weekly?'选择周':'选择月份')+'</span><button type="button" class="calendar-trigger" data-calendar="report" data-mode="'+(weekly?'week':'month')+'" id="report-anchor" value="'+today+'">'+today+icon('calendar-days')+'</button></label><div class="report-sheet-list"><span>'+icon('table-2')+'Excel 明细、摘要与工作日历</span><span>'+icon('bot')+'附带 JSON、分析提示词与校验脚本</span><span>'+icon('list-filter')+'表头冻结并支持筛选</span></div><div class="sheet-actions">'+button(icon('file-down')+'导出分析包 ZIP','report-export','',true)+'</div>',{frequency},'EXPORT DATA');
 }
 function productGroupSheet(id){
  const group=productGroups.find(item=>item.id===id);if(!group)return;
@@ -353,6 +370,7 @@ document.addEventListener('compositionstart',e=>{if(isSearch(e.target))composing
 document.addEventListener('compositionend',e=>{if(isSearch(e.target)){composingSearch=false;query=e.target.value;render()}});
 document.addEventListener('input',e=>{if(e.target.closest?.('.naming-editor')){if(dialogContext)dialogContext.namingDirty=true;$('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet [data-command="asset-upload"]').disabled=true;$('#naming-dirty').hidden=false}if(isSearch(e.target)){query=e.target.value;if(!e.isComposing&&!composingSearch)render()}});
 document.addEventListener('change',async e=>{
+ if(['work-month','work-points','work-sessions'].includes(e.target.id)){if(e.target.id==='work-month'){const context=dialogContext;context.policyDrafts[context.policyMonth]=policyInput();context.policyMonth=e.target.value;const targetMonth=context.policyMonth;$('#sheet [data-command="work-policy-save"]').disabled=true;context.selectedDate=null;try{const result=context.policyDrafts[context.policyMonth]?{policy:context.policyDrafts[context.policyMonth]}:await api('work-calendar-preview',{month:context.policyMonth});if(dialogContext!==context||context.policyMonth!==targetMonth)return;context.policyExceptions={...result.policy.exceptions};$('#work-points').value=result.policy.dailyPoints;$('#work-sessions').value=result.policy.sessions.map(a=>a.join('-')).join(', ')}catch(err){errorBox(err.message);return}}await previewPolicy();return}
  if(e.target.id==='asset-person'){assetPerson=e.target.value;render();return}
  if(e.target.id==='asset-date'){assetDate=e.target.value;render();return}
  if(e.target.id==='product-group-choice'){
@@ -372,6 +390,11 @@ document.addEventListener('click',async e=>{
  const period=e.target.closest('[data-period]');if(period){assetPeriod=period.dataset.period;render();return}
  const el=e.target.closest('button');if(!el||el.disabled)return;if(el.dataset.view){navigate(el.dataset.view);return}if(el.dataset.filter!==undefined){filter=el.dataset.filter;render();return}
  const command=el.dataset.command,t=data.tasks.find(t=>t.id===el.dataset.task);
+ if(command==='work-day'){const d=dialogContext.calendar.days.find(d=>d.date===el.dataset.date);dialogContext.selectedDate=d.date;dialogContext.policyExceptions[d.date]=!d.working;await previewPolicy();return}
+ if(command==='work-day-restore'){delete dialogContext.policyExceptions[dialogContext.selectedDate];await previewPolicy();return}
+ if(command==='work-month-restore'){for(const d of Object.keys(dialogContext.policyExceptions))if(d.startsWith($('#work-month').value))delete dialogContext.policyExceptions[d];await previewPolicy();return}
+ if(command==='team-metric'){teamMetric(Number(el.dataset.metric));return}
+ if(command==='work-policy-open'){workPolicySheet();return}
  if(command==='archive-retry'){await loadSpec();return}
  if(command==='asset-replan'){await chooseDelivery(null,true);return}
  if(command==='close-sheet'){closeSheet();return}
@@ -379,7 +402,7 @@ document.addEventListener('click',async e=>{
  if(command==='index-refresh'){await loadPage(view,true);return}
  if(command==='upload-dismiss'){if(uploadJob?.status!=='running'){uploadJob=null;drawUpload()}return}
  if(command==='upload-task'){sealSheet(uploadJob.taskId);return}
- if(command==='person-tasks'){view='tasks';person=el.dataset.person;filter='all';query='';render({animate:true});return}
+ if(command==='person-tasks'){if($('#sheet').open)closeSheet();view='tasks';person=el.dataset.person;filter='all';query='';render({animate:true});return}
  if(command==='back-team'){navigate('team');return}
  if(command==='settings-shortcut'){navigate('settings');return}
  if(command==='task-detail'||command==='open-new'){taskDetail(el.dataset.task);return}
@@ -406,7 +429,8 @@ document.addEventListener('click',async e=>{
   openSheet('改派任务','<p class="description">'+esc(taskName(t))+' · 保留原设计记录，通知新的设计师。</p><label class="field"><span>新的设计负责人</span><select id="reassign-person">'+data.people.filter(p=>!p.removed).map(p=>'<option value="'+p.id+'" '+(p.id===t.owner?'disabled':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><div class="sheet-actions">'+button('确认改派','reassign-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id},'REASSIGN');return;
  }
  await run(el,async()=>{
-  if(command==='refresh'||command==='refresh-completed'){
+  if(command==='work-policy-save'){await api('work-policy-save',{month:$('#work-month').value,revision:dialogContext.policyRevision,policy:policyInput()});closeSheet();accept(await api('snapshot'));toast('工作日历已保存，目标及报表按规则重算')}
+  else if(command==='refresh'||command==='refresh-completed'){
    const sync=data.workbookSyncVersion===1?await api('sync-requirements',{includeCompleted:command==='refresh-completed'}):null;if(view==='assets')assets=await api('assets');accept(await api('snapshot'));
    const details=[];if(sync?.taskIssues)details.push(sync.taskIssues+' 份原表需要处理，请查看任务提示');if(sync?.importIssues)details.push(sync.importIssues+' 份需求未能导入');if(sync?.imported)details.push('新导入 '+sync.imported+' 份');if(sync?.relinked)details.push('重新关联 '+sync.relinked+' 份改名需求');if(sync?.repaired)details.push('修复 '+sync.repaired+' 个重复任务');if(sync?.assetsReopened)details.push(sync.assetsReopened+' 个任务恢复待封存');
    toast(sync?.error||(!sync||sync.checked===false?'尚未检查 NAS，请确认负责人服务已连接':details.length?'NAS 检查完成：'+details.join('，'):command==='refresh-completed'?'已完结需求及归档文件已重新检查':'进行中任务已刷新；已完结内容保留缓存'),!!sync?.error||!!sync?.taskIssues||!!sync?.importIssues||!sync||sync.checked===false)
@@ -431,7 +455,7 @@ document.addEventListener('click',async e=>{
   }
   else if(command==='report-export'){
    const result=await api('export-report',{frequency:dialogContext.frequency,anchor:$('#report-anchor').value});
-   if(result){closeSheet();toast('已导出 '+result.label+' 数据：'+result.counts.tasks+' 个任务，'+result.counts.items+' 个事项')}
+   if(result){closeSheet();toast('已导出 '+result.label+' 分析包：'+result.counts.tasks+' 个任务，'+result.counts.items+' 个事项')}
   }
   else if(command==='product-group-save'){
    await api('product-group-update',{groupId:el.dataset.group,canonicalName:$('#group-canonical').value,aliases:$('#group-aliases').value});productGroups=await api('product-groups');closeSheet();render();toast('产品系列已更新');

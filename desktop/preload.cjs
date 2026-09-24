@@ -1,5 +1,6 @@
 'use strict';
 const {contextBridge,ipcRenderer,webUtils}=require('electron');
+contextBridge.exposeInMainWorld('windowChrome',{call:action=>ipcRenderer.invoke('window-chrome',action),onState:callback=>{const fn=(_event,value)=>callback(value);ipcRenderer.on('window-chrome-state',fn);return ()=>ipcRenderer.removeListener('window-chrome-state',fn)}});
 contextBridge.exposeInMainWorld('workbench',{
  call:(command,payload={})=>ipcRenderer.invoke('workbench:call',command,payload),
  dropAssets:(files,payload={})=>{
