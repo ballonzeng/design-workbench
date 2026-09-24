@@ -7,5 +7,6 @@
  const state=value=>{const b=controls.querySelector('[data-window=maximize]');b.ariaLabel=b.title=value.maximized?'还原窗口':'最大化';b.classList.toggle('restored',value.maximized);document.documentElement.dataset.maximized=String(value.maximized)};
  window.windowChrome?.onState(state);window.windowChrome?.call('state').then(state).catch(()=>{});
  // Controls stay usable above modal dialogs; the title divider belongs to them.
- document.addEventListener('toggle',e=>{if(e.target.tagName!=='DIALOG')return;const modal=[...document.querySelectorAll('dialog[open]')].at(-1);if(controls.matches(':popover-open'))controls.hidePopover();controls.removeAttribute('popover');(modal||header).append(controls);if(modal){controls.setAttribute('popover','manual');controls.showPopover()}},true);
+ const modals=[];
+ document.addEventListener('toggle',e=>{if(e.target.tagName!=='DIALOG')return;const index=modals.indexOf(e.target);if(index>=0)modals.splice(index,1);if(e.target.open)modals.push(e.target);const modal=modals.filter(d=>d.open).at(-1);if(controls.matches(':popover-open'))controls.hidePopover();controls.removeAttribute('popover');(modal||header).append(controls);if(modal){controls.setAttribute('popover','manual');controls.showPopover()}},true);
 })();

@@ -56,3 +56,16 @@ button,.drill-row,.identity,.card{transition:background .16s ease,border-color .
 .detail-drawer,.detail-drawer[open]{animation:none!important;transform:none;translate:none;background:#fafbfe;backdrop-filter:none;isolation:isolate}.detail-drawer::backdrop{backdrop-filter:none;background:#23304e30}.detail-drawer[open] .modalbody{animation:drawer-content-fade .14s ease-out}@keyframes drawer-content-fade{from{opacity:.5}to{opacity:1}}
 .select-popup{background:#fff;backdrop-filter:none}.card{animation:none!important;transform:none}.window-controls{box-shadow:0 1px 0 #dde2eb}.window-controls button:active{transform:none!important}
 @media(prefers-reduced-motion:reduce){.detail-drawer[open] .modalbody{animation:none!important}}
+
+/* Match the viewport and modal surfaces used by the other workbench clients. */
+html,body{height:100%;overflow:hidden}
+main{right:12px;bottom:12px;overscroll-behavior:contain;overflow-x:hidden}
+main,aside,.modalbody,.select-popup{scrollbar-width:thin;scrollbar-color:#c2c7d0 transparent}
+header>span:nth-child(2){position:absolute;left:50%;transform:translateX(-50%);margin:0;max-width:calc(100% - 300px)}
+#modal{overflow:hidden;max-height:calc(100dvh - 70px);background:#fafbfe;transform:none!important;animation:none!important}
+#modal[open]{display:flex;flex-direction:column}
+#modal .modalhead{flex-shrink:0;background:#fafbfe}
+#modal .modalbody{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;margin-right:10px;padding-right:18px}
+#modal::backdrop{top:42px;background:#25324a42;backdrop-filter:none}
+.select-popup:popover-open{animation:drawer-content-fade .14s ease-out}
+@media(max-width:760px){header>span:first-child{display:none}header>span:nth-child(2){max-width:calc(100% - 280px)}}

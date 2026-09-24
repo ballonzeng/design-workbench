@@ -269,3 +269,25 @@ body:has(#sheet[open]){overflow:hidden}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 .work-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.work-weekday{text-align:center;font-size:12px;color:var(--secondary);padding:5px}.work-day{min-height:66px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border:1px solid #dce4f0;border-radius:10px;background:#f1f6ff;color:#365d9d;padding:4px;position:relative}.work-day strong{font-size:16px}.work-day small{font-size:11px}.work-day.resting{background:#f7f7f8;color:#87909f;border-color:#e5e7ec}.work-day.overridden{background:#fff6e5;border-color:#ddad51;color:#875d13}.work-day i{font-size:9px;font-style:normal}.work-day[aria-pressed=true]{outline:2px solid #557bce;outline-offset:1px}.calendar-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 20px}#work-calendar-selected{min-height:24px;margin:12px 0}.work-day:active{transform:none!important}
 #sheet[data-work-calendar=true]{width:min(720px,calc(100vw - 28px))}#sheet[data-work-calendar=true] .sheet-header{padding:18px 24px;min-height:80px}#sheet[data-work-calendar=true] #sheet-body{padding:12px 24px 20px}#sheet[data-work-calendar=true] #sheet-body>.description{margin:6px 0 12px;font-size:13px}.work-month-row{display:flex;align-items:center;gap:16px;margin:10px 0}.work-month-row>span{margin:0;white-space:nowrap}.work-month-row input{max-width:230px}#work-calendar-total{padding:9px 12px;margin:10px 0;font-size:13px}#sheet[data-work-calendar=true] .work-day{min-height:47px}.work-policy-details{border-top:1px solid var(--line);padding-top:12px}.work-policy-details summary{cursor:pointer;font-size:13px;color:var(--secondary);margin-bottom:12px}#sheet[data-work-calendar=true] #work-calendar-selected{font-size:12px;margin:8px 0}#sheet[data-work-calendar=true] .calendar-actions{margin:8px 0 14px;gap:8px}.calendar-actions .button{font-size:12px;min-height:34px;padding:7px 10px}
+
+/* Viewport shell: scroll content inside its surface, never the native window. */
+html,body{height:100%;overflow:hidden}
+.app{height:100dvh;min-height:0;overflow:hidden}
+.workspace{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.toolbar,[data-role="manager"] .toolbar{position:relative;top:auto;flex-shrink:0;background:#f5f5f7;backdrop-filter:none}
+.toolbar::after{display:none}
+#main{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;width:calc(100% - 12px);margin:0 12px 12px 0}
+.offline-banner{flex-shrink:0}
+.sidebar{min-height:0;overflow-y:auto}
+#main,#sheet-body,#sheet-footer,.sidebar,.date-picker{scrollbar-width:thin;scrollbar-color:#c2c7d0 transparent}
+#sheet-body{margin-right:10px;padding-right:16px}
+#sheet[data-work-calendar="true"] #sheet-body{padding-right:14px}
+.sheet-header{background:#fafbfc}
+#sheet::backdrop,dialog.date-picker::backdrop{top:42px;background:#25324a42;backdrop-filter:none}
+body:has(#sheet[open]) dialog.date-picker::backdrop{background:transparent}
+.window-bar{padding:0 150px;background:#f5f5f7}
+.window-lockup{position:absolute;left:50%;transform:translateX(-50%);max-width:calc(100% - 300px);white-space:nowrap}
+dialog.date-picker{max-height:calc(100dvh - 70px);transform:none!important;animation:none!important}
+@media(max-width:760px){.window-credit{display:none}.window-lockup{max-width:calc(100% - 280px)}}
+
+#sheet{border-radius:22px}

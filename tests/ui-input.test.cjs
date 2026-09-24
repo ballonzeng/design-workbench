@@ -30,7 +30,7 @@ test('pending archive filter excludes sealed and unfinished tasks',()=>{
  const start=source.indexOf('function selectedTasks()'),end=source.indexOf('\nfunction tasksPage()',start),context=vm.createContext({data:{tasks:[{id:'pending',state:4,sealed:false},{id:'sealed',state:4,sealed:true},{id:'working',state:2,sealed:false}]},person:null,view:'tasks',filter:'unsealed',query:''});vm.runInContext(source.slice(start,end),context);assert.equal(context.selectedTasks().map(t=>t.id).join(','),'pending');
 });
 test('navigation renders before NAS response and late response cannot change the selected view',async()=>{
- let resolve,rendered=0;const context=vm.createContext({pageLoads:{assets:{busy:false,error:''}},api:()=>new Promise(r=>resolve=r),render:()=>rendered++,window:{scrollTo:()=>{}}});
+ let resolve,rendered=0;const context=vm.createContext({pageLoads:{assets:{busy:false,error:''}},api:()=>new Promise(r=>resolve=r),render:()=>rendered++,window:{scrollTo:()=>{}},$:()=>({scrollTo:()=>{}})});
  const load=source.slice(source.indexOf('async function loadPage('),source.indexOf('\nconst dayKey='));const nav=source.slice(source.indexOf('async function navigate('),source.indexOf('\n',source.indexOf('async function navigate(')));
  vm.runInContext('let view="team",filter="all",person=null,query="",assets=[],productGroups=[];'+load+nav,context);const pending=context.navigate('assets');assert.ok(rendered>=2);await context.navigate('tasks');resolve([{id:'late'}]);await pending;assert.equal(vm.runInContext('view',context),'tasks');assert.equal(vm.runInContext('pageLoads.assets.busy',context),false);
 });

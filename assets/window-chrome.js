@@ -6,13 +6,13 @@
   const state=s=>{const b=controls.querySelector('[data-action=maximize]');b.title=b.ariaLabel=s.maximized?'还原窗口':'最大化';b.classList.toggle('restored',s.maximized)};
   window.windowChrome?.onState(state);window.windowChrome?.call('state').then(state).catch(()=>{});
   // A modal makes its background inert; keep the same controls in its top layer.
-  const dialog=document.querySelector('dialog');dialog?.addEventListener('toggle',()=>{
-    if(dialog.open){dialog.append(controls);controls.setAttribute('popover','manual');controls.showPopover();}
-    else{if(controls.matches(':popover-open'))controls.hidePopover();controls.removeAttribute('popover');document.querySelector('header').append(controls);}
-  });
+  const modals=[];
   let first=true,pending=0,timer,start;
   const banner=document.createElement('div');banner.className='nas-loading';banner.hidden=true;banner.setAttribute('popover','manual');banner.setAttribute('role','status');banner.setAttribute('aria-live','polite');document.body.append(banner);
-  dialog?.addEventListener('toggle',()=>{if(banner.matches(':popover-open'))banner.hidePopover();(dialog.open?dialog:document.body).append(banner);if(pending)banner.showPopover();});
+  document.addEventListener('toggle',e=>{if(e.target.tagName!=='DIALOG')return;const index=modals.indexOf(e.target);if(index>=0)modals.splice(index,1);if(e.target.open)modals.push(e.target);const modal=modals.filter(d=>d.open).at(-1);
+    if(controls.matches(':popover-open'))controls.hidePopover();controls.removeAttribute('popover');(modal||document.querySelector('header')).append(controls);if(modal){controls.setAttribute('popover','manual');controls.showPopover()}
+    if(banner.matches(':popover-open'))banner.hidePopover();(modal||document.body).append(banner);if(pending)banner.showPopover();
+  },true);
   function paint(){const elapsed=Math.floor((Date.now()-start)/1000);banner.innerHTML='<span class="nas-spinner" aria-hidden="true"></span><div><strong>'+(first?'首次加载 · 正在检索 NAS':'正在刷新需求状态')+'</strong><small>'+(first?'需检索多个状态目录，数据较多，首次加载可能较久，请稍候。':'正在读取最新需求数据，请稍候。')+(elapsed>=5?' 已等待 '+elapsed+' 秒。':'')+'</small></div>';}
   window.trackNas=async(command,work)=>{
     if(!['scan','configure'].includes(command))return work();

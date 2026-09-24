@@ -181,7 +181,7 @@ function render({animate=false}={}){
  $('#connection-state').innerHTML='<span class="status-dot '+(data.connection?.online?'online':'')+'"></span>'+(data.connection?.online?'内网同步在线':'等待连接');
  syncBadge();
  const offline=$('#offline-banner');offline.hidden=(!!data.connection?.online&&!data.nasStatus?.error)||data.requiresPairing;offline.textContent=data.connection?.error||data.nasStatus?.error||'正在连接负责人端，任务操作将在连接恢复后开放。';
- const main=$('#main'),scroll=window.scrollY,active=document.activeElement,focusId=active?.id,selection=active?.selectionStart;
+ const main=$('#main'),scroll=main.scrollTop,active=document.activeElement,focusId=active?.id,selection=active?.selectionStart;
  if(data.requiresPairing)main.innerHTML=pairingPage();
  else if(view==='team')main.innerHTML=teamPage();
  else if(view==='assets')main.innerHTML=assetsPage();
@@ -202,14 +202,14 @@ function render({animate=false}={}){
  const detailTask=dialogContext?.kind==='detail'&&data.tasks.find(t=>t.id===dialogContext.taskId);
  if(detailTask){for(const line of document.querySelectorAll('#sheet-body .summary-line'))if(line.querySelector('dt')?.textContent==='任务状态')line.querySelector('dd').textContent=states[detailTask.state]}
  const sheetIssue=$('#requirement-sync-issue');if(sheetIssue){const issueTask=data.tasks.find(t=>t.id===dialogContext?.taskId);sheetIssue.hidden=!taskIssue(issueTask);sheetIssue.textContent=issueText(issueTask)}
- main.classList.toggle('page-enter',!manager()&&animate&&lastInput==='pointer');icons();window.scrollTo({top:scroll,behavior:'instant'});
+ main.classList.toggle('page-enter',!manager()&&animate&&lastInput==='pointer');icons();main.scrollTo({top:scroll,behavior:'instant'});
  if(manager()&&animate&&lastInput==='pointer'&&!matchMedia('(prefers-reduced-motion:reduce)').matches){
   const parts=[...main.querySelectorAll('.page-heading,.overview,.section-heading,.person-card,.task-card,.list-tools,.settings-card,.report-card,.product-group')].filter(el=>el.getBoundingClientRect().top<innerHeight).slice(0,9);
   for(const [index,el] of parts.entries())el.animate([{opacity:.5},{opacity:1}],{duration:200,delay:Math.min(index*12,72),easing:'cubic-bezier(0.23,1,0.32,1)',fill:'backwards'});
  }
  if(focusId&&['task-search','asset-search','product-search'].includes(focusId)){const input=document.getElementById(focusId);input?.focus({preventScroll:true});input?.setSelectionRange(selection,selection)}
 }
-async function navigate(next){view=next;filter='all';person=null;query='';render({animate:true});window.scrollTo({top:0,behavior:'instant'});if(pageLoads[next])await loadPage(next)}
+async function navigate(next){view=next;filter='all';person=null;query='';render({animate:true});$('#main').scrollTo({top:0,behavior:'instant'});if(pageLoads[next])await loadPage(next)}
 function moveSheet(open){
  const dialog=$('#sheet');sheetMotion?.cancel();sheetMotion=null;
  if(!open){dialog.close();return}
