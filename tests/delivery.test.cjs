@@ -115,7 +115,7 @@ test('one completed task accepts separate folder-named asset types before final 
  await fs.mkdir(assetRoot);await fs.mkdir(taskRoot);const service=await new Service(path.join(dir,'db'),{host:'127.0.0.1',port:0}).start();let client;
  try{
   const manager={role:'manager',personId:'zeng'},t=task();t.items[0].category=null;await service.call(manager,'configure',{assetRoot,taskRoot});service.store.put('task',t.id,t);
-  service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
+  service.nas.readTask=async()=>Buffer.alloc(0);service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
   const code=await service.call(manager,'pair-code',{personId:'lv',host:'127.0.0.1'}),pairing=new Client(decodeCode(code.code));client=new Client(await pairing.pair());
   for(const category of ['主图','SKU']){
    const folder='0903-吕慧芸-'+category,root=path.join(dir,folder);await fs.mkdir(root);await fs.writeFile(path.join(root,'源文件.txt'),'editable');await fs.copyFile(path.join(__dirname,'../assets/icon.png'),path.join(root,'最终.png'));
@@ -143,7 +143,7 @@ test('automatic naming v3 transfers originals into flat category directories and
  await fs.mkdir(assetRoot);await fs.mkdir(taskRoot);const service=await new Service(path.join(dir,'db'),{host:'127.0.0.1',port:0}).start();let client;
  try{
   const manager={role:'manager',personId:'zeng'},t=task();t.items[0].category=null;await service.call(manager,'configure',{assetRoot,taskRoot});service.store.put('task',t.id,t);
-  service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
+  service.nas.readTask=async()=>Buffer.alloc(0);service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
   const code=await service.call(manager,'pair-code',{personId:'lv',host:'127.0.0.1'}),pairing=new Client(decodeCode(code.code));client=new Client(await pairing.pair());
   for(const category of ['创意图','SKU']){
    const folder='0903-吕慧芸-'+category,root=path.join(dir,folder);await fs.mkdir(root);await fs.writeFile(path.join(root,'源文件.txt'),'editable');await fs.copyFile(path.join(__dirname,'../assets/icon.png'),path.join(root,'最终.png'));
@@ -171,7 +171,7 @@ test('fully received legacy delivery waits through Excel lock and automatically 
  await fs.mkdir(assetRoot);await fs.mkdir(taskRoot);const service=await new Service(path.join(dir,'db'),{host:'127.0.0.1',port:0}).start();let client;
  try{
   const manager={role:'manager',personId:'zeng'},t=task();t.items[0].category=null;await service.call(manager,'configure',{assetRoot,taskRoot});service.store.put('task',t.id,t);
-  service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
+  service.nas.readTask=async()=>Buffer.alloc(0);service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
   const code=await service.call(manager,'pair-code',{personId:'lv',host:'127.0.0.1'}),pairing=new Client(decodeCode(code.code));client=new Client(await pairing.pair());
   for(const category of ['创意图','SKU']){
    const folder='0903-吕慧芸-'+category,root=path.join(dir,folder);await fs.mkdir(root);await fs.writeFile(path.join(root,'源文件.txt'),'editable');await fs.copyFile(path.join(__dirname,'../assets/icon.png'),path.join(root,'最终.png'));
@@ -199,7 +199,7 @@ test('automatic naming v4 preserves names and task links inside separate source 
  await fs.mkdir(assetRoot);await fs.mkdir(taskRoot);const service=await new Service(path.join(dir,'db'),{host:'127.0.0.1',port:0}).start();let client;
  try{
   const manager={role:'manager',personId:'zeng'},t=task();t.items[0].category=null;await service.call(manager,'configure',{assetRoot,taskRoot});service.store.put('task',t.id,t);
-  service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
+  service.nas.readTask=async()=>Buffer.alloc(0);service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
   const code=await service.call(manager,'pair-code',{personId:'lv',host:'127.0.0.1'}),pairing=new Client(decodeCode(code.code));client=new Client(await pairing.pair());
   for(const category of ['创意图','SKU']){
    const folder='0903-吕慧芸-'+category,root=path.join(dir,folder);await fs.mkdir(root);await fs.writeFile(path.join(root,'源文件.txt'),'editable');await fs.copyFile(path.join(__dirname,'../assets/icon.png'),path.join(root,'最终.png'));
@@ -228,7 +228,7 @@ test('lowercase SKU folder scans, normalizes and transfers through the full arch
  await fs.mkdir(assetRoot);await fs.mkdir(taskRoot);const service=await new Service(path.join(dir,'db'),{host:'127.0.0.1',port:0}).start();let client;
  try{
   const manager={role:'manager',personId:'zeng'},t=task();t.items[0].category=null;await service.call(manager,'configure',{assetRoot,taskRoot});service.store.put('task',t.id,t);
-  service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
+  service.nas.readTask=async()=>Buffer.alloc(0);service.nas.sync=async(_old,next,patch)=>{assert.match(patch.L4,/：/);service.store.put('task',next.id,next);return next};
   const code=await service.call(manager,'pair-code',{personId:'lv',host:'127.0.0.1'}),pairing=new Client(decodeCode(code.code));client=new Client(await pairing.pair());
   for(const category of ['创意图','SKU']){
    const folder='0904-吕慧芸-'+(category==='SKU'?'sku':category),root=path.join(dir,folder);await fs.mkdir(root);await fs.writeFile(path.join(root,'源文件.txt'),'editable');await fs.copyFile(path.join(__dirname,'../assets/icon.png'),path.join(root,'最终.png'));

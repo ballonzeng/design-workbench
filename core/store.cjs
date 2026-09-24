@@ -1,6 +1,7 @@
 'use strict';
 const {DatabaseSync}=require('node:sqlite');
 const fs=require('node:fs');const path=require('node:path');const crypto=require('node:crypto');
+const calibrationKey=task=>task.id+':'+task.completedAt+':'+task.owner+':round:'+(task.archiveRound||0);
 class Store{
  constructor(dir){
   fs.mkdirSync(dir,{recursive:true});this.dir=dir;this.db=new DatabaseSync(path.join(dir,'workbench.sqlite'));
@@ -17,7 +18,7 @@ class Store{
   if(kind==='task')this.saveTaskVersion({...body,id});
  }
  saveTaskVersion(task){
-  const fields=['id','state','sealed','requestedAt','createdAt','assignedAt','startedAt','reviewAt','completedAt','completedMonth','sealedAt','brand','product','code','title','operator','owner','items','elapsedMs','runningSince','filename','importedTiming','externalTiming','completionFromFolder','completionTimeSource'];
+  const fields=['id','state','sealed','requestedAt','createdAt','assignedAt','startedAt','reviewAt','completedAt','completedMonth','sealedAt','brand','product','code','title','operator','owner','items','elapsedMs','runningSince','filename','importedTiming','externalTiming','completionFromFolder','completionTimeSource','archiveRound'];
   const body=JSON.stringify(Object.fromEntries(fields.filter(k=>task[k]!==undefined).map(k=>[k,task[k]])));
   const previous=this.db.prepare('SELECT body FROM task_versions WHERE taskId=? ORDER BY seq DESC LIMIT 1').get(task.id);
   if(previous?.body!==body)this.db.prepare('INSERT INTO task_versions(taskId,at,body) VALUES(?,?,?)').run(task.id,Date.now(),body);
@@ -28,8 +29,9 @@ class Store{
   // Apply an explicit manager correction to the same completed round only.
   // Workflow, ownership and timing remain those recorded at the report cutoff.
   for(const task of tasks){
-   const correction=this.get('contributionCalibration',task.id+':'+task.completedAt+':'+task.owner);
-   if(correction&&task.state===4&&task.completedAt===correction.completedAt&&task.owner===correction.owner&&task.code===correction.code){task.items=structuredClone(correction.items);task.reportCalibrationAt=correction.at}
+   const round=task.archiveRound||0;
+   const correction=this.get('contributionCalibration',calibrationKey(task))||(round===0?this.get('contributionCalibration',task.id+':'+task.completedAt+':'+task.owner):null);
+   if(correction&&task.state===4&&task.completedAt===correction.completedAt&&task.owner===correction.owner&&task.code===correction.code&&round===(correction.archiveRound||0)){task.items=structuredClone(correction.items);task.reportCalibrationAt=correction.at}
   }
   const unavailable=this.all('task').filter(t=>!known.has(t.id)&&Math.min(t.createdAt||Infinity,t.requestedAt||Infinity)<=cutoff).map(t=>({id:t.id,filename:t.filename,reason:'该周期早于可追溯版本记录，无法还原当时人员、事项和状态'}));
   return {tasks,unavailable};
@@ -44,4 +46,4 @@ class Store{
  close(){this.db.close()}
 }
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
-module.exports={Store,digest};
+module.exports={Store,digest,calibrationKey};

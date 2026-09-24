@@ -77,27 +77,18 @@ async function refresh(){
 }
 async function selectFiles(payload){
  if(role!=='designer')throw Error('仅设计端可以上传封存');
- if(uploading)throw Error('已有文件正在上传，请等待封存完成');
+ if(uploadBatchActive||uploading)throw Error('已有文件正在上传，请等待封存完成');
  let paths=payload.paths;
- if(paths===undefined){
-  const result=await dialog.showOpenDialog(win,{title:'选择整个交付文件夹',properties:['openDirectory']});
-  if(result.canceled)return null;paths=result.filePaths;
- }
+ if(payload.selectionId){const prior=chosen.get(payload.selectionId);if(!prior?.root||prior.taskId!==payload.taskId)throw Error('选择已失效，请重新选择文件夹');paths=[prior.root]}
+ if(paths===undefined){const result=await dialog.showOpenDialog(win,{title:'选择整个交付文件夹',properties:['openDirectory']});if(result.canceled)return null;paths=result.filePaths}
  if(!Array.isArray(paths)||paths.length!==1)throw Error('每次请拖入一个完整的交付文件夹');
  const root=path.resolve(paths[0]),info=await invoke('archive-spec',{taskId:payload.taskId});
- if(info.namingVersion!==4)throw Error('请先更新负责人端，才能使用自动分类与命名');
- const leaf=normalizeDeliveryFolder(path.basename(root)),single=/^\d{4}-[^-]+-[^-]+$/.test(leaf),selections=[],skipped=[];
- let roots;if(single)roots=[root];else{const children=await fsp.readdir(root,{withFileTypes:true});const useful=children.filter(x=>!ignoredDeliveryEntry(x.name));if(!useful.length||useful.some(x=>!x.isDirectory()||x.isSymbolicLink()))throw Error('总文件夹中只放按规则命名的类型文件夹；请把散落文件放入对应类型');roots=useful.map(x=>path.join(root,x.name))}
- const categories=new Set();for(const target of roots){
-  const folder=normalizeDeliveryFolder(path.basename(target));if(!single){const expectedSuffix=info.basePrefix.slice(4),known=require('../core/rules.cjs').CATEGORIES.find(c=>folder.slice(4)===expectedSuffix+c.output);if(known&&!info.categories.some(c=>c.id===known.id)){skipped.push(folder);continue}}
-  const spec=await invoke('archive-spec',{taskId:payload.taskId,folder});if(categories.has(spec.category))throw Error('一个总文件夹不能重复提交同一类型');categories.add(spec.category);
-  const result=await scanDelivery(target,spec,{automatic:true});selections.push({taskId:payload.taskId,...result,spec,productDecision:payload.productDecision});
- }
- if(!selections.length)throw Error('这些产物类型均已归档，无需再次上传');
- const id=crypto.randomUUID();chosen.clear();chosen.set(id,{batch:selections});
- return {selectionId:id,spec:selections[0].spec,folder:leaf,skipped,categoryCount:selections.length,projectFolders:selections.flatMap(s=>s.projectFolders.map(f=>s.folder+'/'+f)),totalSize:selections.reduce((n,s)=>n+s.totalSize,0),files:selections.flatMap(s=>s.files.map(({file,mtimeMs,...f})=>({...f,previewFrom:s.folder+'/'+f.relativePath,previewTo:s.spec.categoryName+'/'+(f.kind==='source'?'01.源文件':'02.导出图片')+'/'+f.relative}))) };
-
+ if(info.namingVersion!==4||!info.namingRepairVersion)throw Error('请先更新负责人主机，才能使用命名纠正');
+ const {batch,preview}=await require('./delivery-selection.cjs').planSelection(root,info,folder=>invoke('archive-spec',{taskId:payload.taskId,folder}),payload.naming||{repair:true});
+ const id=crypto.randomUUID();chosen.clear();chosen.set(id,{root,taskId:payload.taskId,namingIssues:preview.namingIssues,batch:batch.map(s=>({...s,taskId:payload.taskId,productDecision:payload.productDecision}))});
+ return {selectionId:id,...preview};
 }
+let uploadBatchActive=false;
 let uploadBatchProgress=null;
 function sendUploadProgress(progress){
  const batch=uploadBatchProgress;let percent=progress.percent;
@@ -105,16 +96,17 @@ function sendUploadProgress(progress){
  win?.webContents.send('workbench:progress',progress);
 }
 async function upload(payload){
- if(uploading)throw Error('已有文件正在上传');const selected=chosen.get(payload.selectionId);if(!selected?.batch)throw Error('请重新选择交付文件夹');if(payload.selfChecked!==true)throw Error('请先确认命名预览');
- // Keep the batch active between individual uploads, including awaited snapshot refreshes.
- let completed=0;for(const selection of selected.batch){uploadBatchProgress={index:completed,count:selected.batch.length,label:selection.spec.categoryName};const id=crypto.randomUUID();chosen.set(id,selection);try{const result=await uploadOne({...payload,selectionId:id});if(result?.pending){uploadBatchProgress=null;return {...result,completed,total:selected.batch.length}}completed++}catch(e){chosen.delete(id);uploadBatchProgress=null;throw Error('已归档 '+completed+' / '+selected.batch.length+' 类；'+selection.folder+' 未完成：'+e.message+'。已成功的类别不会回滚，重新选择总文件夹会跳过已归档类别。')}}uploadBatchProgress=null;chosen.delete(payload.selectionId);return {completed};
+ if(uploadBatchActive||uploading)throw Error('已有文件正在上传');const selected=chosen.get(payload.selectionId);if(!selected?.batch)throw Error('请重新选择交付文件夹');if(selected.taskId!==payload.taskId)throw Error('任务选择已变化，请重新选择');if(selected.namingIssues?.length)throw Error('请先处理命名预览中的问题，再上传');if(payload.selfChecked!==true)throw Error('请先确认命名预览');
+ uploadBatchActive=true;
+ try{let completed=0;for(const selection of selected.batch){uploadBatchProgress={index:completed,count:selected.batch.length,label:selection.spec.categoryName};const id=crypto.randomUUID();chosen.set(id,selection);try{const result=await uploadOne({...payload,selectionId:id});if(result?.pending)return {...result,completed,total:selected.batch.length};completed++}catch(e){chosen.delete(id);throw Error('已归档 '+completed+' / '+selected.batch.length+' 类；'+selection.folder+' 未完成：'+e.message+'。已成功的类别不会回滚，重新选择会跳过已归档类别。')}}chosen.delete(payload.selectionId);return {completed}}
+ finally{chosen.clear();uploadBatchActive=false;uploadBatchProgress=null}
 }
 async function uploadOne(payload){
  if(role!=='designer'||!client)throw Error('设计端尚未连接');if(uploading)throw Error('已有文件正在上传');
  const selection=chosen.get(payload.selectionId);if(!selection)throw Error('请重新选择文件');if(payload.selfChecked!==true)throw Error('请先完成自检');
  uploading=true;
  try{
-  const fresh=await scanDelivery(selection.root,selection.spec,{automatic:true});
+  const fresh=await scanDelivery(selection.root,selection.spec,{automatic:true,naming:selection.naming});
   const signature=s=>JSON.stringify({dirs:s.originalDirectories,files:s.files.map(f=>[f.relativePath,f.size,f.mtimeMs])});
   if(signature(fresh)!==signature(selection))throw Error('交付文件夹内容已变化，请重新拖入并自检');
   const files=[];for(let i=0;i<selection.files.length;i++){
@@ -125,7 +117,7 @@ async function uploadOne(payload){
    if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs)throw Error('文件正在被修改，请保存后重新上传：'+f.relativePath);
    files.push({...f,sha256});
   }
-   const batch=await client.rpc('archive-prepare',{taskId:selection.taskId,selfChecked:true,productDecision:selection.productDecision,delivery:{version:1,namingVersion:4,folder:selection.folder,directories:selection.originalDirectories},files:files.map(({file,mtimeMs,...f})=>f)});
+   const batch=await client.rpc('archive-prepare',{taskId:selection.taskId,selfChecked:true,productDecision:selection.productDecision,delivery:{version:1,namingVersion:4,folder:selection.folder,directories:selection.originalDirectories,naming:selection.naming},files:files.map(({file,mtimeMs,...f})=>f)});
   let sent=0;const total=files.reduce((n,f)=>n+f.size,0);
   for(let i=0;i<files.length;i++){
    if(!batch.received[String(i)]){
@@ -138,7 +130,7 @@ async function uploadOne(payload){
   const result=await client.rpc('archive-commit',{uploadId:batch.id});chosen.delete(payload.selectionId);await refresh();return result;
  }finally{uploading=false}
 }
- const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location']);
+ const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan']);
 async function handle(command,payload){
  if(!COMMANDS.has(command))throw Error('不支持的操作');
  if(command==='snapshot')return refresh();
@@ -189,7 +181,7 @@ async function handle(command,payload){
    await fsp.writeFile(saveResult.filePath,report.bytes,{flag:'w'});
    return {path:saveResult.filePath,label:report.range.label,counts:report.counts};
   }
- if(command==='asset-pick')return selectFiles(payload);
+ if(command==='asset-pick'||command==='asset-replan')return selectFiles(payload);
  if(command==='asset-drop'){if(!Array.isArray(payload.paths))throw Error('请拖入交付文件夹');return selectFiles(payload)}
  if(command==='asset-upload')return upload(payload);
  if(command==='open-requirement'){

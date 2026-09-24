@@ -5,20 +5,26 @@ const {guarded,exists,ensureDir,fileHash,isInside,folderName}=require('./nas.cjs
 const {classifyDelivery,normalizeDeliveryFolder}=require('./delivery.cjs');
 const {nameDelivery}=require('./naming.cjs');
 const {automaticNames}=require('./automatic-names.cjs');const {imageWidth}=require('./image-metadata.cjs');
+const {archiveIdentity,currentUpload}=require('./archive-state.cjs');
+const manifestIdentity=({files,delivery})=>digest(JSON.stringify(delivery?{files,delivery}:files));
 const SOURCE_EXT=new Set(['.psd','.psb','.ai','.cdr','.afdesign','.c4d','.blend','.aep','.prproj','.fig','.zip']);
 const IMAGE_EXT=new Set(['.jpg','.jpeg','.png','.gif','.webp','.tif','.tiff']);
-function archiveSpec(task,item,folder){
+function hasCategoryAssets(task,category,exceptId=null){
+ return (task.deliveries||[]).some(d=>d.category===category&&d.id!==exceptId)||[...(task.items||[]),...(task.retainedArchiveItems||[])].some(i=>i.category===category&&(i.sealed||i.assetId)&&i.assetId!==exceptId);
+}
+const uploadCategory=(task,upload)=>upload.spec?.category||task.items.find(i=>i.id===upload.itemId)?.category;
+function archiveSpec(task,item,folder,{allowArchived=false}={}){
  if(folder!==undefined)folder=normalizeDeliveryFolder(folder);
  const p=parts(task.completedAt),author=PEOPLE.find(x=>x.id===task.owner)?.name;
  if(!author)fail('设计师资料不完整');
  const prefix=p.month+p.day+'-'+author+'-';
  if(!item){
-  const available=CATEGORIES.filter(c=>!(task.deliveries||[]).some(d=>d.category===c.id));
-  if(!folder)return {folderUploadVersion:2,namingVersion:4,basePrefix:prefix,categories:available.map(c=>({id:c.id,name:c.name,folder:c.folder,output:c.output})),examples:available.map(c=>prefix+c.output)};
+  const available=CATEGORIES.filter(c=>!hasCategoryAssets(task,c.id));
+  if(!folder)return {folderUploadVersion:2,namingVersion:4,namingRepairVersion:1,basePrefix:prefix,categories:available.map(c=>({id:c.id,name:c.name,folder:c.folder,output:c.output})),examples:available.map(c=>prefix+c.output)};
   const date=folder.slice(0,4),month=Number(date.slice(0,2)),day=Number(date.slice(2)),validDate=/^\d{4}$/.test(date)&&month>=1&&month<=12&&day>=1&&day<=[31,29,31,30,31,30,31,31,30,31,30,31][month-1];
   const actualPrefix=date+'-'+author+'-',cat=validDate&&CATEGORIES.find(c=>folder===actualPrefix+c.output);
   if(!cat)fail('交付文件夹命名不符合规则：应为「MMDD-'+author+'-产物类型」（日期可用实际交付日期），产物类型可选 '+CATEGORIES.map(c=>c.output).join('、')+'；当前为「'+String(folder)+'」。');
-  if((task.deliveries||[]).some(d=>d.category===cat.id))fail(cat.name+'已经归档，请勿重复上传');
+  if(!allowArchived&&hasCategoryAssets(task,cat.id))fail(cat.name+'已经归档，请勿重复上传');
   return {base:folder,basePrefix:actualPrefix,category:cat.id,categoryName:cat.name,expectedCount:null,product:task.items[0]?.product,folderUploadVersion:2,namingVersion:4};
  }
  const cat=CATEGORIES.find(c=>c.id===item.category);
@@ -28,10 +34,10 @@ function archiveSpec(task,item,folder){
  const count=group.reduce((sum,i)=>{const rate=rateFor(i.type);return sum+(rate.base?rate.base*i.qty+(i.extra||0):i.qty)},0);
  return {base,category:cat.id,expectedCount:count,product:item.product,folderUploadVersion:1};
 }
-function validateTaskManifest(task,files,delivery){
+function validateTaskManifest(task,files,delivery,options){
  if(!delivery||delivery.version!==1)fail('交付文件夹格式不支持，请更新两端程序');
- const spec=archiveSpec(task,null,delivery.folder),raw=classifyDelivery(spec,delivery.folder,files,delivery.directories),classified=[3,4].includes(delivery.namingVersion)?automaticNames(spec,raw):delivery.namingVersion===2?nameDelivery(spec,raw):raw;
- return {spec,delivery:{version:1,...([2,3,4].includes(delivery.namingVersion)?{namingVersion:delivery.namingVersion}:{}),folder:delivery.folder,directories:classified.directories},files:classified.files.map((f,index)=>{
+ const spec=archiveSpec(task,null,delivery.folder,options),raw=classifyDelivery(spec,delivery.folder,files,delivery.directories),classified=[3,4].includes(delivery.namingVersion)?automaticNames(spec,raw,delivery.naming):delivery.namingVersion===2?nameDelivery(spec,raw):raw;
+ return {spec,delivery:{version:1,...([2,3,4].includes(delivery.namingVersion)?{namingVersion:delivery.namingVersion}:{}),folder:delivery.folder,naming:delivery.naming?.repair===true?{repair:true,outputNames:delivery.naming.outputNames||{}}:undefined,directories:classified.directories},files:classified.files.map((f,index)=>{
   if(!/^[a-f0-9]{64}$/.test(f.sha256))fail('文件校验信息无效：'+f.relativePath);
   return {id:String(index),name:f.name,folder:f.folder,relativePath:f.relativePath,kind:f.kind,size:f.size,sha256:f.sha256,relative:f.relative,...(f.width?{width:f.width}:{})};
  })};
@@ -103,7 +109,60 @@ async function checkSignature(file,name){
  if(!ok)fail('文件内容与扩展名不符：'+name);
 }
 class Assets{
- constructor(store,nas,products=null){this.store=store;this.nas=nas;this.products=products;this.inflight=new Set()}
+ constructor(store,nas,products=null){this.store=store;this.nas=nas;this.products=products;this.inflight=new Set();this.busy=new Set()}
+ lockBatch(id){
+  if(this.busy.has(id)||[...this.inflight].some(k=>k.startsWith(id+'/')))fail('该批次仍有文件正在传输或处理，请等待结束后重试',409);
+  this.busy.add(id);
+ }
+ checkUpload(u,task,actor){
+  if(!u||u.actor!==actor.personId)fail('没有此封存权限',403);
+  if(!task)fail('任务不存在',404);own(actor,task);
+  if(!currentUpload(task,u))fail('这是回退前的上传记录，请重新选择产物',409);
+  if(!['uploading','publishing','done'].includes(u.status))fail('上传已取消或被新文件替代，请重新选择产物',409);
+  if(u.taskIdentity&&u.taskIdentity!==archiveIdentity(task))fail('任务确认或需求内容已变化，请重新选择产物',409);
+  if(task.blocked)fail('任务存在未恢复的文件同步，请先恢复后重试',409);
+  if(hasCategoryAssets(task,uploadCategory(task,u),u.id))fail('该类别已经归档，请勿重复上传',409);
+ }
+ async verified(file,expected){
+  try{const stat=await fsp.stat(file);return stat.isFile()&&stat.size===expected.size&&await fileHash(file)===expected.sha256}
+  catch(e){if(e.code==='ENOENT')return false;throw e}
+ }
+ async refreshReceived(u){
+  if(u.status==='done')return u;
+  this.lockBatch(u.id);
+  try{
+  const next=structuredClone(u);next.received??={};
+  for(const f of u.files){
+   const stage=await guarded(this.nas.config.assetRoot,'_workbench-staging',u.id,f.id+'.part');
+   let valid=await this.verified(stage,f);
+   if(!valid&&u.published?.[f.id]){const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,u.published[f.id]));valid=await this.verified(dest,f)}
+   if(valid)next.received[f.id]??=Date.now();else delete next.received[f.id];
+  }
+  this.store.put('upload',next.id,next);return next;
+  }finally{this.busy.delete(u.id)}
+ }
+ async publicationPlan(u,category){
+  const plan=[];
+  // Verify the complete package before creating any official files. A verified
+  // published file is sufficient for recovery even if staging was already lost.
+  for(const f of u.files){
+   const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,f.kind==='source'?category.source:category.output),f.relative);
+   let source=dest;
+   if(await exists(dest)){if(!await this.verified(dest,f))fail('正式库同名文件内容不同，未覆盖：'+f.name)}
+   else{source=await guarded(this.nas.config.assetRoot,'_workbench-staging',u.id,f.id+'.part');if(!await this.verified(source,f))fail('暂存文件缺失或校验失败，请重新选择同一批产物补传：'+f.name)}
+   await checkSignature(source,f.name);plan.push({file:f,source,dest});
+  }
+  return plan;
+ }
+ async publishFiles(u,category,plan){
+  for(const d of u.delivery?.directories||[]){const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,d.kind==='source'?category.source:category.output),d.relative);await fsp.mkdir(dest,{recursive:true})}
+  for(const {file:f,source,dest} of plan){
+   await fsp.mkdir(path.dirname(dest),{recursive:true});
+   if(!await exists(dest))await fsp.copyFile(source,dest,fs.constants.COPYFILE_EXCL);
+   if(!await this.verified(dest,f))fail('正式库同名文件内容不同或资产写入校验失败，未覆盖：'+f.name);
+   u.published[f.id]=dest;this.store.put('upload',u.id,u);
+  }
+ }
  revisionCategory(category,task){
   if(!task.archiveRound)return category;
   const folder='返工-'+task.id+'-'+task.archiveRound;
@@ -111,68 +170,73 @@ class Assets{
  }
  async prepare(task,itemId,actor,payload){
   own(actor,task);if(task.state!==4)fail('运营确认完结后才能上传产物',409);
-  const modern=!itemId&&payload.delivery?.version===1,item=modern?task.items[0]:task.items.find(i=>i.id===itemId);if(!item||task.sealed||!modern&&item.sealed)fail('任务不存在或已经封存',409);
+  if(task.blocked)fail('任务存在未恢复的文件同步，请先恢复后重试',409);
+  const modern=!itemId&&payload.delivery?.version===1,item=modern?task.items[0]:task.items.find(i=>i.id===itemId);if(!item)fail('事项不存在',409);
   if(payload.selfChecked!==true)fail('请确认源文件可编辑、最终产物与运营确认内容一致');
-  const {files,spec,delivery}=modern?validateTaskManifest(task,payload.files,payload.delivery):validateManifest(task,item,payload.files,payload.delivery);
+  const {files,spec,delivery}=modern?validateTaskManifest(task,payload.files,payload.delivery,{allowArchived:true}):validateManifest(task,item,payload.files,payload.delivery);
+  const manifestHash=manifestIdentity({files,delivery});
+  const previous=this.store.all('upload').find(u=>currentUpload(task,u)&&u.itemId===(modern?null:itemId)&&u.actor===actor.personId&&['uploading','publishing','done'].includes(u.status)&&(!u.taskIdentity||u.taskIdentity===archiveIdentity(task))&&manifestIdentity(u)===manifestHash);
+  if(hasCategoryAssets(task,spec.category,previous?.id))fail((spec.categoryName||'该类别')+'已经归档，请勿重复上传',409);
+  if(previous){this.checkUpload(previous,task,actor);await this.nas.ready();return this.refreshReceived(previous)}
+  if(task.sealed||!modern&&item.sealed)fail('任务已经封存',409);
   const assetItem=modern?{...item,category:spec.category}:item;
    await this.nas.ready();const productResolution=this.products?await this.products.confirm(assetItem,payload.productDecision):null,product=await this.nas.productDirectory(assetItem),category=this.revisionCategory(await this.nas.categoryDirectory(product,assetItem,false,[2,3].includes(delivery?.namingVersion)?'flat':!!delivery),task);
-   const manifestHash=digest(JSON.stringify(delivery?{files,delivery,productResolution}:files));
-  const previous=this.store.all('upload').find(u=>u.taskId===task.id&&u.itemId===(modern?null:itemId)&&u.actor===actor.personId&&u.manifestHash===manifestHash&&(u.archiveRound||0)===(task.archiveRound||0)&&u.status!=='cancelled');
-  if(previous)return previous;
-  for(const u of this.store.all('upload'))if(u.taskId===task.id&&(modern?u.spec?.category===spec.category:u.itemId===itemId)&&u.status==='publishing')fail('上次封存正在恢复，请使用同一批文件重试');
+  for(const u of this.store.all('upload'))if(currentUpload(task,u)&&uploadCategory(task,u)===spec.category&&u.status==='publishing')fail('上次封存正在恢复，请使用同一批文件重试');
   for(const f of files){const target=path.join(f.kind==='source'?category.source:category.output,f.relative);await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,target));if(await exists(target)&&await fileHash(target)!==f.sha256)fail('正式库存在同名但内容不同的文件，请确认新版本名称后上传：'+f.name)}
   const id=crypto.randomUUID(),stage=await ensureDir(this.nas.config.assetRoot,'_workbench-staging',id);
-   const record={id,archiveRound:task.archiveRound||0,taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
-  const replaced=this.store.all('upload').filter(u=>u.taskId===task.id&&u.actor===actor.personId&&(modern?u.spec?.category===spec.category:u.itemId===itemId)&&u.status==='uploading');
-  if(replaced.some(u=>[...this.inflight].some(key=>key.startsWith(u.id+'/'))))fail('该类别仍有文件正在传输，请等待结束后再更换文件');
+   const record={id,archiveRound:task.archiveRound||0,taskIdentity:archiveIdentity(task),taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
+  const replaced=this.store.all('upload').filter(u=>u.taskId===task.id&&u.actor===actor.personId&&uploadCategory(task,u)===spec.category&&u.status==='uploading');
+  if(replaced.some(u=>this.busy.has(u.id)||[...this.inflight].some(key=>key.startsWith(u.id+'/'))))fail('该类别仍有文件正在传输或处理，请等待结束后再更换文件');
   this.store.atomic(()=>{for(const u of replaced)this.store.put('upload',u.id,{...u,status:'cancelled',replacedBy:id,error:'已由重新选择的文件替代'});this.store.put('upload',id,record)});return record;
  }
  async receive(uploadId,fileId,actor,stream,length){
   const key=uploadId+'/'+fileId;if(this.inflight.has(key))fail('该文件正在上传',409);
+  if(this.busy.has(uploadId))fail('该批次正在校验或归档，请等待结束后重试',409);
   const record=this.store.get('upload',uploadId),task=record&&this.store.get('task',record.taskId);
-  if(!record||record.actor!==actor.personId||actor.role!=='designer')fail('没有此上传权限',403);own(actor,task);
-  if((record.archiveRound||0)!==(task.archiveRound||0)||task.state!==4)fail('任务已回退，请重新选择产物',409);
-  const file=record.files.find(f=>f.id===fileId);if(!file||record.status!=='uploading')fail('上传状态无效');
+  this.checkUpload(record,task,actor);
+  if(task.state!==4||task.sealed)fail('任务状态已变化，请重新选择产物',409);
+  const file=record.files.find(f=>f.id===fileId);if(!file||!['uploading','publishing'].includes(record.status))fail('上传状态无效');
   if(Number(length)!==file.size)fail('上传长度不匹配');
-  await this.nas.ready();this.inflight.add(key);
-  const destination=await guarded(this.nas.config.assetRoot,'_workbench-staging',record.id,file.id+'.part');
+  this.inflight.add(key);let destination,written=false;
   try{
-   const starting=this.store.get('upload',uploadId);delete starting.received[fileId];this.store.put('upload',uploadId,starting);
+   await this.nas.ready();destination=await guarded(this.nas.config.assetRoot,'_workbench-staging',record.id,file.id+'.part');
+   await fsp.mkdir(path.dirname(destination),{recursive:true});
+   const starting=this.store.get('upload',uploadId),current=this.store.get('task',record.taskId);this.checkUpload(starting,current,actor);
+   if(current.state!==4||current.sealed||!['uploading','publishing'].includes(starting.status))fail('上传状态已变化，请重新选择产物',409);
+   delete starting.received[fileId];this.store.put('upload',uploadId,starting);
    let received=0;const hash=crypto.createHash('sha256');
    const meter=new Transform({transform(chunk,_encoding,callback){received+=chunk.length;if(received>file.size)return callback(new Error('上传超过声明大小'));hash.update(chunk);callback(null,chunk)}});
-   await pipeline(stream,meter,fs.createWriteStream(destination,{flags:'w'}));
+   written=true;await pipeline(stream,meter,fs.createWriteStream(destination,{flags:'w'}));
    if(received!==file.size||hash.digest('hex')!==file.sha256)fail('上传完整性校验失败，请重试');
    await checkSignature(destination,file.name);
-   const latest=this.store.get('upload',uploadId);latest.received[fileId]=Date.now();this.store.put('upload',uploadId,latest);return {received:true};
-  }catch(e){if(await exists(destination))await fsp.unlink(destination);throw e}
+   const latest=this.store.get('upload',uploadId),latestTask=this.store.get('task',record.taskId);this.checkUpload(latest,latestTask,actor);
+   if(latestTask.state!==4||latestTask.sealed||!['uploading','publishing'].includes(latest.status))fail('上传状态已变化，请重新选择产物',409);
+   latest.received[fileId]=Date.now();this.store.put('upload',uploadId,latest);return {received:true};
+  }catch(e){if(written)await fsp.unlink(destination).catch(()=>{});throw e}
   finally{this.inflight.delete(key)}
  }
  async commit(uploadId,actor){
+  const upload=this.store.get('upload',uploadId);this.checkUpload(upload,upload&&this.store.get('task',upload.taskId),actor);
+  this.lockBatch(uploadId);
+  try{return await this.commitLocked(uploadId,actor)}finally{this.busy.delete(uploadId)}
+ }
+ async commitLocked(uploadId,actor){
   let u=this.store.get('upload',uploadId);if(!u||u.actor!==actor.personId)fail('没有此封存权限',403);
-  let task=this.store.get('task',u.taskId);own(actor,task);
-  if((u.archiveRound||0)!==(task.archiveRound||0))fail('这是回退前的上传记录，请重新选择产物',409);
+  let task=this.store.get('task',u.taskId);this.checkUpload(u,task,actor);
+  if([...this.inflight].some(k=>k.startsWith(u.id+'/')))fail('该批次仍有文件正在传输，请等待结束后重试',409);
   const item=task.items.find(i=>i.id===u.itemId);
   if(u.spec?.folderUploadVersion===2){const done=task.deliveries?.find(d=>d.id===u.id);if(done){await this.finalizeDelivery(u,task,done);return task}return this.commitDelivery(u,task,actor)}
   if(item?.sealed&&item.assetId===u.id){await this.finalize(u,task);return task}
-  if(task.state!==4||item.sealed)fail('任务状态已改变',409);
+  if(task.state!==4||task.sealed||!item||item.sealed||u.status==='done')fail('任务状态已改变',409);
   if(u.files.some(f=>!u.received[f.id]))fail('还有文件尚未上传完整');
   await this.nas.ready();
   const product=await this.nas.productDirectory(item,true),resolvedCategory=this.revisionCategory(await this.nas.categoryDirectory(product,item,true,!!u.delivery),task);
   // An older client may be resuming a flat upload after split folders were added.
   const category=u.delivery?resolvedCategory:{...resolvedCategory,source:u.category.source,output:u.category.output};
   if(product.path!==u.product.path||category.path!==u.category.path)fail('资产目录发生变化，请重新选择文件');
-  const publishing=u.status==='publishing';u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
+  const plan=await this.publicationPlan(u,category);u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
   try{
-   for(const d of u.delivery?.directories||[]){const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,d.kind==='source'?category.source:category.output),d.relative);await fsp.mkdir(dest,{recursive:true})}
-   for(const f of u.files){
-    const source=await guarded(this.nas.config.assetRoot,'_workbench-staging',u.id,f.id+'.part');
-    if(await fileHash(source)!==f.sha256)fail('暂存文件校验失败');
-    const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,f.kind==='source'?category.source:category.output),f.relative);
-    await fsp.mkdir(path.dirname(dest),{recursive:true});
-    if(await exists(dest)){if(await fileHash(dest)!==f.sha256)fail('正式库同名文件内容不同，未覆盖')}
-    else{await fsp.copyFile(source,dest,fs.constants.COPYFILE_EXCL);if(await fileHash(dest)!==f.sha256)fail('资产写入校验失败')}
-    u.published[f.id]=dest;this.store.put('upload',u.id,u);
-   }
+   await this.publishFiles(u,category,plan);
    const next=structuredClone(task),sealTime=Date.now();
    for(const nextItem of next.items.filter(i=>(u.itemIds||[u.itemId]).includes(i.id))){nextItem.sealed=true;nextItem.sealedAt=sealTime;nextItem.assetPath=category.path;nextItem.assetId=u.id;nextItem.productPath=product.path}
    next.sealed=next.items.every(i=>i.sealed);next.updatedAt=Date.now();next.version++;
@@ -183,24 +247,17 @@ class Assets{
   }catch(e){u.error=e.message;this.store.put('upload',u.id,u);throw e}
  }
  async commitDelivery(u,task,actor){
-  if(task.state!==4||task.sealed)fail('任务状态已改变',409);
+  if(task.state!==4||task.sealed||u.status==='done')fail('任务状态已改变',409);
+  if(task.deliveries?.some(d=>d.category===u.spec.category))fail(u.spec.categoryName+'已经归档，请勿重复上传',409);
   if(u.files.some(f=>!u.received[f.id]))fail('还有文件尚未上传完整');
   await this.nas.ready();const item={...task.items[0],category:u.spec.category};
   const product=await this.nas.productDirectory(item,true),category=this.revisionCategory(await this.nas.categoryDirectory(product,item,true,[2,3].includes(u.delivery?.namingVersion)?'flat':true),task);
   if(product.path!==u.product.path||category.path!==u.category.path)fail('资产目录发生变化，请重新选择文件');
-  if([3,4].includes(u.delivery?.namingVersion)&&u.spec.category==='main')for(const f of u.files.filter(f=>f.kind==='output')){const file=await guarded(this.nas.config.assetRoot,'_workbench-staging',u.id,f.id+'.part');if(await imageWidth(file)!==f.width)fail('图片实际宽度与预览不一致，请重新选择：'+f.name)}
-  const publishing=u.status==='publishing';u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
+  const plan=await this.publicationPlan(u,category);
+  if([3,4].includes(u.delivery?.namingVersion)&&u.spec.category==='main')for(const {file:f,source} of plan.filter(p=>p.file.kind==='output')){if(await imageWidth(source)!==f.width)fail('图片实际宽度与预览不一致，请重新选择：'+f.name)}
+  u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
   try{
-   for(const d of u.delivery.directories||[]){const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,d.kind==='source'?category.source:category.output),d.relative);await fsp.mkdir(dest,{recursive:true})}
-   for(const f of u.files){
-    const source=await guarded(this.nas.config.assetRoot,'_workbench-staging',u.id,f.id+'.part');
-    if(await fileHash(source)!==f.sha256)fail('暂存文件校验失败');
-    const dest=await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,f.kind==='source'?category.source:category.output),f.relative);
-    await fsp.mkdir(path.dirname(dest),{recursive:true});
-    if(await exists(dest)){if(await fileHash(dest)!==f.sha256)fail('正式库同名文件内容不同，未覆盖')}
-    else{await fsp.copyFile(source,dest,fs.constants.COPYFILE_EXCL);if(await fileHash(dest)!==f.sha256)fail('资产写入校验失败')}
-    u.published[f.id]=dest;this.store.put('upload',u.id,u);
-   }
+   await this.publishFiles(u,category,plan);
    const next=structuredClone(task),at=Date.now(),delivery={id:u.id,category:u.spec.category,categoryName:u.spec.categoryName,path:category.path,folder:u.spec.base,productPath:product.path,at};
    next.deliveries=[...(next.deliveries||[]),delivery];next.sealed=false;next.updatedAt=at;next.version++;
    const addresses=next.deliveries.map(d=>(CATEGORIES.find(c=>c.id===d.category)?.name||d.categoryName)+'：'+d.path).join('\n');
@@ -210,10 +267,16 @@ class Assets{
  }
  async finish(taskId,actor,version){
   const task=this.store.get('task',taskId);if(!task)fail('任务不存在',404);own(actor,task);
-  if(task.state!==4||task.sealed)fail('任务尚不能完成封存',409);
+  if(task.blocked)fail('任务存在未恢复的文件同步，请先恢复后重试',409);
+  if(task.state!==4)fail('任务尚不能完成封存',409);
+  if(task.sealed){
+   if(version!==task.version&&!(version===task.sealedFromVersion&&task.version===version+1))fail('任务已更新，请刷新后重试',409);
+   return task;
+  }
   if(version!==task.version)fail('任务已更新，请刷新后重试',409);
   if(!(task.deliveries||[]).length)fail('请先上传至少一类最终产物');
-  if(this.store.all('upload').some(u=>u.taskId===task.id&&['uploading','publishing'].includes(u.status)))fail('仍有产物正在上传或等待恢复');
+  if(this.store.all('upload').some(u=>currentUpload(task,u)&&(['uploading','publishing'].includes(u.status)||[...this.inflight].some(k=>k.startsWith(u.id+'/')))))fail('仍有产物正在上传或等待恢复');
+  if(new Set(task.deliveries.map(d=>d.category)).size!==task.deliveries.length)fail('同一类别存在重复归档记录，请先核对后再封存');
   await this.nas.ready();
   for(const delivery of task.deliveries){
    const record=this.store.get('asset',delivery.id);
@@ -225,7 +288,11 @@ class Assets{
     if(!stat.isFile()||stat.size!==file.size||await fileHash(target)!==file.sha256)fail('不能完成封存，正式库文件已改变：'+file.name+'。请恢复原文件后重试');
    }
   }
-  const next=structuredClone(task);next.sealed=true;next.sealedAt=Date.now();next.updatedAt=next.sealedAt;next.version++;
+  // Completion normally skips background scans. Check this task's original
+  // immediately before sealing, so a saved edit or Excel lock cannot be missed.
+  if(task.workbookSyncIssue)fail('请先由负责人刷新已完结任务并处理原表异常：'+task.workbookSyncIssue.message,409);
+  await this.nas.readTask(task);
+  const next=structuredClone(task);next.sealed=true;next.sealedAt=Date.now();next.sealedFromVersion=version;next.updatedAt=next.sealedAt;next.version++;
   this.store.atomic(()=>{this.store.put('task',next.id,next);this.store.event('sealed',actor.personId,next.id,{categories:next.deliveries.map(d=>d.category)})});return next;
  }
  async finalize(u,task){
@@ -270,8 +337,13 @@ class Assets{
  async recover(){
   for(const u of this.store.all('upload')){
    const task=this.store.get('task',u.taskId),item=task?.items.find(i=>i.id===u.itemId),delivery=task?.deliveries?.find(d=>d.id===u.id);
-   if(u.spec?.folderUploadVersion===2&&delivery&&(u.status!=='done'||u.maintenanceError))await this.finalizeDelivery(u,task,delivery);
-   else if(item?.sealed&&item.assetId===u.id&&(u.status!=='done'||u.maintenanceError))await this.finalize(u,task);
+   if(u.status==='cancelled'||!currentUpload(task,u))continue;
+   if(this.busy.has(u.id)||[...this.inflight].some(k=>k.startsWith(u.id+'/')))continue;
+   this.lockBatch(u.id);
+   try{
+    if(u.spec?.folderUploadVersion===2&&delivery&&(u.status!=='done'||u.maintenanceError))await this.finalizeDelivery(u,task,delivery);
+    else if(item?.sealed&&item.assetId===u.id&&(u.status!=='done'||u.maintenanceError))await this.finalize(u,task);
+   }finally{this.busy.delete(u.id)}
   }
  }
  async reconcileMissingAssets({includeCompleted=true}={}){
@@ -313,7 +385,7 @@ class Assets{
       item.sealed=false;delete item.sealedAt;delete item.assetPath;delete item.assetId;delete item.productPath;affected=true;
      }
      if(next.assetSyncIssue?.assetId===recorded.id)delete next.assetSyncIssue;
-     if(affected){next.sealed=false;delete next.sealedAt;next.updatedAt=now;next.version=(next.version||0)+1}
+     if(affected){next.sealed=false;delete next.sealedAt;delete next.sealedFromVersion;next.updatedAt=now;next.version=(next.version||0)+1}
     }
     this.store.atomic(()=>{
      this.store.put('asset',recorded.id,asset);

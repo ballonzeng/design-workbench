@@ -41,3 +41,18 @@ test('explicit completed calibration updates prior-month report points and prese
  const history=store.reportTasks(cutoff),report=createReport(history.tasks,[],{frequency:'month',anchor:'2026-08-15',generatedAt:time});assert.equal(history.tasks[0].completedAt,complete.completedAt);assert.equal(history.tasks[0].reportCalibrationAt,time);assert.match(cell(xmlSheet(report.bytes,2),'R2'),/>10</);assert.match(cell(xmlSheet(report.bytes,4),'H2'),/>10</);
  store.put('task',task.id,{...complete,state:3,contributionCalibration:null});assert.equal(store.reportTasks(cutoff).tasks[0].items[0].points,10);store.put('contributionCalibration',task.id+':'+complete.completedAt+':'+complete.owner,{...correction,completedAt:time});assert.equal(store.reportTasks(cutoff).tasks[0].items[0].points,4);
 });
+
+test('report calibrations stay with their own archive round when completion hour and owner repeat',t=>{
+ const {calibrationKey}=require('../core/store.cjs'),store=new Store(fs.mkdtempSync(path.join(os.tmpdir(),'report-calibration-rounds-')));t.after(()=>store.close());
+ let time=at('2026-09-24T14:00:00');t.mock.method(Date,'now',()=>time);
+ const complete={...task,state:4,completedAt:time,completedMonth:'2026-09',archiveRound:0};store.put('task',task.id,complete);const firstCutoff=time;
+ const first={at:++time,completedAt:complete.completedAt,owner:complete.owner,code:complete.code,archiveRound:0,items:[{type:'creative',qty:5,points:10}]};store.put('contributionCalibration',calibrationKey(complete),first);
+ time++;store.put('task',task.id,{...complete,state:3,archiveRound:1,completedAt:null});
+ const next={...complete,archiveRound:1,items:[{type:'creative',qty:3,points:6}]};time++;store.put('task',task.id,next);const nextCutoff=time;
+ assert.equal(store.reportTasks(firstCutoff).tasks[0].items[0].points,10);assert.equal(store.reportTasks(nextCutoff).tasks[0].items[0].points,6);
+ const second={...first,at:++time,archiveRound:1,items:[{type:'creative',qty:7,points:14}]};store.put('contributionCalibration',calibrationKey(next),second);
+ assert.equal(store.reportTasks(firstCutoff).tasks[0].items[0].points,10);assert.equal(store.reportTasks(nextCutoff).tasks[0].items[0].points,14);
+ // Legacy corrections have no round field and must never cross into rework.
+ store.remove('contributionCalibration',calibrationKey(next));store.put('contributionCalibration',complete.id+':'+complete.completedAt+':'+complete.owner,{...first,archiveRound:undefined});
+ assert.equal(store.reportTasks(nextCutoff).tasks[0].items[0].points,6);
+});

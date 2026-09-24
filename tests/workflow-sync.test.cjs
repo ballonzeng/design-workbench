@@ -363,3 +363,37 @@ test('remote manager can calibrate through authenticated RPC while designer cann
  const f=await completedCalibrationFixture(t),pair=await f.service.call(manager,'manager-pair-code',{host:'127.0.0.1'}),remote=new Client(decodeCode(pair.code));await remote.pair();t.after(()=>remote.close());await f.changeItems();const payload={taskId:f.task.id,version:f.current().version};
  await assert.rejects(f.client.rpc('calibrate-contribution',payload),/仅负责人/);const result=await remote.rpc('calibrate-contribution',payload);assert.equal(result.nextPoints,6);
 });
+
+test('calibration preview reports row changes without applying them and confirms the reviewed workbook',async t=>{
+ const f=await completedCalibrationFixture(t),before=f.current();const saved=await f.changeItems();
+ const payload={taskId:f.task.id,version:before.version,preview:true};
+ await assert.rejects(f.service.call({role:'designer',personId:'hong'},'calibrate-contribution',payload),/仅负责人/);
+ const preview=await f.service.call(manager,'calibrate-contribution',payload);
+ assert.equal(preview.preview,true);assert.equal(preview.version,before.version);assert.equal(preview.workbookHash,digest(saved));assert.equal(preview.previousPoints,1.5);assert.equal(preview.nextPoints,6);
+ assert.equal(preview.changes.length,1);assert.equal(preview.changes[0].row,6);assert.equal(preview.changes[0].before.qty,1);assert.equal(preview.changes[0].after.type,'creative');assert.equal(preview.changes[0].after.qty,3);
+ assert.deepEqual(f.current(),before);assert.equal(f.service.store.all('contributionCalibration').length,0);assert.equal(f.service.store.events(before.id).some(e=>e.kind==='contribution-calibrated'),false);
+ await f.changeItems('创意图',4);
+ await assert.rejects(f.service.call(manager,'calibrate-contribution',{taskId:f.task.id,version:preview.version,expectedHash:preview.workbookHash}),/与预览时不同/);assert.deepEqual(f.current(),before);
+ const latest=await f.service.call(manager,'calibrate-contribution',payload);
+ const result=await f.service.call(manager,'calibrate-contribution',{taskId:f.task.id,version:latest.version,expectedHash:latest.workbookHash});assert.equal(result.nextPoints,8);
+ const correction=f.service.store.get('contributionCalibration',require('../core/store.cjs').calibrationKey(before));assert.equal(correction.archiveRound,0);assert.equal(correction.nextPoints,8);
+});
+
+test('calibration preview identifies added and removed rows separately',async t=>{
+ const f=await completedCalibrationFixture(t);await f.changeItems('创意图',4,xml=>xml.replace(/<row r="6">([\s\S]*?)<\/row>/,(_,cells)=>'<row r="7">'+cells.replace(/r="([A-Z]+)6"/g,'r="$17"')+'</row>'));
+ const preview=await f.service.call(manager,'calibrate-contribution',{taskId:f.task.id,version:f.current().version,preview:true});
+ assert.deepEqual(preview.changes.map(c=>[c.row,c.before?.row||null,c.after?.row||null]),[[6,6,null],[7,null,7]]);assert.equal(f.current().items[0].row,6);
+});
+
+test('calibration ignores retired upload rounds but still blocks active uploads from its current round',async t=>{
+ const f=await completedCalibrationFixture(t);f.service.store.put('task',f.task.id,{...f.current(),archiveRound:2});await f.changeItems();
+ for(const [id,archiveRound,status] of [['old-uploading',1,'uploading'],['old-publishing',1,'publishing'],['cancelled',2,'cancelled']])f.service.store.put('upload',id,{id,taskId:f.task.id,archiveRound,status});
+ const preview=await f.service.call(manager,'calibrate-contribution',{taskId:f.task.id,version:f.current().version,preview:true});assert.equal(preview.nextPoints,6);
+ for(const status of ['uploading','publishing']){
+  f.service.store.put('upload','active',{id:'active',taskId:f.task.id,archiveRound:2,status});
+  await assert.rejects(f.calibrate(),/待处理/);
+ }
+ f.service.store.remove('upload','active');await f.calibrate();assert.equal(f.current().items[0].points,6);
+ assert.equal(f.service.store.get('contributionCalibration',require('../core/store.cjs').calibrationKey(f.current())).archiveRound,2);
+ assert.equal(f.service.store.get('upload','old-uploading').status,'uploading');assert.equal(f.service.store.get('upload','cancelled').status,'cancelled');
+});

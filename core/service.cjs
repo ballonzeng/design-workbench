@@ -2,6 +2,7 @@
 const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path');const https=require('node:https');const crypto=require('node:crypto');const {EventEmitter}=require('node:events');
 const selfsigned=require('selfsigned');const {Store,digest}=require('./store.cjs');const {Nas,exists,guarded}=require('./nas.cjs');const {Assets,archiveSpec}=require('./assets.cjs');const {parseRequirement,patchWorkbook,workflowFields,workbookTaskId,identifyWorkbook}=require('./workbook.cjs');
 const {RequirementsSync,reconcileTask,itemsIdentity}=require('./requirements-sync.cjs');
+const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
 const requestIdentity=task=>JSON.stringify([task.requestedAt,task.code,R.normalize(task.product)]);
@@ -178,8 +179,8 @@ class Service extends EventEmitter{
      }
      if(missing.length>1)R.fail('找到多个可能的原任务，无法安全关联改名后的需求表，请负责人核对重复任务');
      if(missing.length===1){
-      const old=missing[0],categories=Object.fromEntries(old.items.map(item=>[item.row,item.category])),extras=Object.fromEntries(old.items.map(item=>[item.row,item.extra||0])),parsed=parseRequirement(bytes,f.name,{categories,extras}),fields=workflowFields(bytes),next=reconcileTask(old,parsed,fields,{state,stage:R.STAGES[state],filename:f.name});
-      this.store.atomic(()=>{this.store.put('task',old.id,next);this.store.event('requirement-renamed','nas',old.id,{from:old.filename,to:f.name,fromState:old.state,toState:next.state})});known.add(f.name);relinked++;
+      const old=missing[0],categories=Object.fromEntries(old.items.map(item=>[item.row,item.category])),extras=Object.fromEntries(old.items.map(item=>[item.row,item.extra||0])),parsed=parseRequirement(bytes,f.name,{categories,extras}),fields=workflowFields(bytes),next=reconcileTask(old,parsed,fields,{state,stage:R.STAGES[state],filename:f.name},Date.now(),this.store.all('upload'));
+      this.store.atomic(()=>{this.store.put('task',old.id,next);cancelStaleUploads(this.store,next);this.store.event('requirement-renamed','nas',old.id,{from:old.filename,to:f.name,fromState:old.state,toState:next.state})});known.add(f.name);relinked++;
      }else{await this.importFile(bytes,f.name,{observedAt:stat.mtimeMs},state,true);known.add(f.name);count++}
     }catch(e){issues.push({filename:f.name,stage:R.STAGES[state],error:e.reasons?.join('；')||e.message,details:e.reasons||[]})}
    }
@@ -247,7 +248,7 @@ class Service extends EventEmitter{
     }else if(command==='member-remove'){
     R.manager(actor);const person=R.PEOPLE.find(p=>p.id===payload.personId);if(!person||person.id===actor.personId||person.title!=='设计师')R.fail('不能移除此成员');
     if(this.store.all('task').some(t=>t.owner===person.id&&t.state>0&&(t.state<4||!t.sealed)))R.fail('该成员还有未完成或待封存任务，请先改派或完成封存',409);
-    if(this.store.all('upload').some(u=>u.actor===person.id&&['uploading','publishing'].includes(u.status)))R.fail('该成员还有上传待处理，请先处理完毕',409);
+    if(this.store.all('upload').some(u=>u.actor===person.id&&(currentUpload(this.store.get('task',u.taskId),u)&&['uploading','publishing'].includes(u.status)||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/')))))R.fail('该成员还有上传待处理，请先处理完毕',409);
     this.store.atomic(()=>{this.store.put('removedMember',person.id,{at:Date.now(),by:actor.personId});for(const kind of ['token','pair'])for(const row of this.store.db.prepare('SELECT id,body FROM records WHERE kind=?').all(kind)){const v=JSON.parse(row.body);if(v.personId===person.id)this.store.put(kind,row.id,{...v,revoked:true,used:true})}this.store.event('member-removed',actor.personId,null,{personId:person.id,name:person.name})});
     for(const [id,stream] of this.streams)if(stream.actor.personId===person.id){this.streams.delete(id);stream.res.end()}result={removed:true};
    }else if(command==='revoke'){
@@ -279,7 +280,7 @@ class Service extends EventEmitter{
     if(payload.action==='assign')next.task.filename=R.stamp(old.requestedAt)+'-'+old.brand+'-'+(old.title||old.product)+'-'+old.operator+'-'+R.PEOPLE.find(p=>p.id===next.task.owner).name+'.xlsx';
     const event={kind:payload.action,actor:actor.personId,body:{from:old.state,to:next.task.state,owner:next.task.owner,reason:payload.reason||null,...(payload.action==='rollback'?{fromSealed:!!old.sealed,toSealed:!!next.task.sealed,retainedAssetIds:[...(old.deliveries||[]).map(d=>d.id),...old.items.map(i=>i.assetId).filter(Boolean)]}:{})}};
     if(codeCorrection)event.body.codeCorrection={from:codeCorrection.from,to:codeCorrection.to};
-    if(next.task.state===old.state&&!Object.keys(next.patch).length){this.store.atomic(()=>{this.store.put('task',old.id,next.task);this.store.event(event.kind,event.actor,old.id,event.body)});result=next.task}
+    if(next.task.state===old.state&&!Object.keys(next.patch).length){this.store.atomic(()=>{this.store.put('task',old.id,next.task);cancelStaleUploads(this.store,next.task);this.store.event(event.kind,event.actor,old.id,event.body)});result=next.task}
     else result=await this.nas.sync(codeCorrection?{...old,workbookHash:codeCorrection.hash}:old,next.task,next.patch,event);
    }else if(command==='received'||command==='read'){
     const t=this.store.get('task',payload.taskId);if(!t)R.fail('任务不存在',404);R.own(actor,t);
@@ -298,7 +299,7 @@ class Service extends EventEmitter{
     if(payload.version!==task.version)R.fail('任务已更新，请刷新后重试',409);
     if(task.state!==4||!task.sealed)R.fail('仅已完成封存的任务可以恢复待封存',409);
     if(task.blocked)R.fail('任务正在同步，请稍后重试',409);
-    const next=structuredClone(task);next.sealed=false;delete next.sealedAt;next.updatedAt=Date.now();next.version++;
+    const next=structuredClone(task);next.sealed=false;delete next.sealedAt;delete next.sealedFromVersion;next.updatedAt=Date.now();next.version++;
     this.store.atomic(()=>{this.store.put('task',next.id,next);this.store.event('archive-reopened',actor.personId,next.id,{previousSealedAt:task.sealedAt,retainedDeliveries:(task.deliveries||[]).map(d=>d.id),reason:'负责人恢复待封存，允许继续补传'})});result=next;
    }else if(command==='archive-finish'){
     result=await this.assets.finish(payload.taskId,actor,payload.version);

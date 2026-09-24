@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('workbench',{
  dropAssets:(files,payload={})=>{
   const paths=Array.from(files).map(file=>webUtils.getPathForFile(file));
   if(!paths.length||paths.some(p=>!p))throw Error('请从文件资源管理器拖入真实的交付文件夹');
-  return ipcRenderer.invoke('workbench:call','asset-drop',{taskId:payload.taskId,itemId:payload.itemId,productDecision:payload.productDecision,paths});
+  return ipcRenderer.invoke('workbench:call','asset-drop',{taskId:payload.taskId,itemId:payload.itemId,productDecision:payload.productDecision,naming:payload.naming,paths});
  },
  onChange:callback=>{const fn=(_event,value)=>callback(value);ipcRenderer.on('workbench:change',fn);return ()=>ipcRenderer.removeListener('workbench:change',fn)},
  onSyncStatus:callback=>{const fn=(_event,value)=>callback(value);ipcRenderer.on('workbench:sync-status',fn);return ()=>ipcRenderer.removeListener('workbench:sync-status',fn)},

@@ -1,5 +1,6 @@
 'use strict';
 const crypto=require('node:crypto');
+const {resetArchive}=require('./archive-state.cjs');
 const PEOPLE=[
   {id:'zeng',name:'曾祥鹏',title:'负责人'},
   {id:'lv',name:'吕慧芸',title:'设计师'},
@@ -84,14 +85,10 @@ function transition(task,actor,action,payload={},now=Date.now()){
   case 'rollback':
    manager(actor);if(t.state===0)fail('已在待分配，不能继续回退',409);
    if(payload.confirmed!==true)fail('请确认回退目标及清理内容');
-   if(t.sealed){t.sealed=false;delete t.sealedAt;break}
+   if(t.sealed){t.sealed=false;delete t.sealedAt;delete t.sealedFromVersion;break}
    stop();t.state--;t.pauseReason=null;
    if(task.state===4){
-    t.deliveryHistory=[...(t.deliveryHistory||[]),{at:now,completedAt:task.completedAt,sealedAt:task.sealedAt,deliveries:task.deliveries||[],items:structuredClone([...task.items,...(task.retainedArchiveItems||[])])}];
-    delete t.retainedArchiveItems;delete t.contributionCalibration;
-    t.archiveRound=(t.archiveRound||0)+1;t.deliveries=[];
-    for(const item of t.items){item.sealed=false;for(const key of ['sealedAt','assetId','assetPath','productPath'])delete item[key]}
-    t.sealed=false;delete t.sealedAt;delete t.assetSyncIssue;patch.L4='';
+    resetArchive(t,task,now);patch.L4='';
    }
    t.completedAt=null;t.completedMonth=null;t.completionFromFolder=false;
    for(const key of ['confirmedBy','confirmationMethod','completionTimeSource'])delete t[key];

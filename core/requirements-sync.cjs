@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 const R=require('./rules.cjs'),{parseRequirement,workflowFields,workbookTaskId}=require('./workbook.cjs');
+const {archiveIdentity,hasCurrentAssets,hasPublishingUpload,resetArchive,cancelStaleUploads}=require('./archive-state.cjs');
 const {digest}=require('./store.cjs'),{guarded,exists}=require('./nas.cjs');
 // Delivery category is chosen later from the designer's finished folder name.
 const identity=t=>JSON.stringify([t.requestedAt,t.code,t.product]);
@@ -13,13 +14,14 @@ function baselineFor(task){
  const [E4,F4]=pair(task.assignedAt),[H4,I4]=pair(task.startedAt),[J4,K4]=pair(task.reviewAt),[M4,N4]=pair(task.completedAt);
  return {E4,F4,G4:R.PEOPLE.find(p=>p.id===task.owner)?.name||'',H4,I4,J4,K4,M4,N4};
 }
-function reconcileTask(old,parsed,fields,location,now=Date.now()){
+function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  if(parsed.workbookTaskId&&parsed.workbookTaskId!==old.id)R.fail('需求表内部编号与当前任务不同，请负责人核对，未替换原任务');
- const dateCorrection=parsed.workbookTaskId===old.id&&old.code===parsed.code&&old.product===parsed.product&&!old.sealed&&!old.items.some(i=>i.sealed)&&!(old.deliveries||[]).length;
+ const archived=hasCurrentAssets(old),publishing=hasPublishingUpload(old,uploads);
+ const dateCorrection=parsed.workbookTaskId===old.id&&old.code===parsed.code&&old.product===parsed.product&&!archived;
  if(identity(old)!==identity(parsed)&&!dateCorrection)R.fail('需求的产品、69码或需求时间已变化，请负责人核对；未自动替换已导入任务');
  const itemsChanged=itemsIdentity(old.items)!==itemsIdentity(parsed.items);
  if(itemsChanged&&old.state===4)R.fail('已完结任务的事项已修改，请负责人保存并关闭 Excel 后，在任务详情中点击“校准点数”');
- if(itemsChanged&&(old.sealed||old.items.some(item=>item.sealed)))R.fail('此需求已有封存资产，不能再修改事项；请先核对或撤销对应封存');
+ if(itemsChanged&&archived)R.fail('此需求已有封存资产，不能再修改事项；请先核对或撤销对应封存');
  const baseline=baselineFor(old),changed=keys=>keys.some(k=>fields[k]!==baseline[k]);
  const folderChanged=location.state!==old.state;
  const times=parsed.templateTimes;
@@ -37,7 +39,7 @@ function reconcileTask(old,parsed,fields,location,now=Date.now()){
  const owner=state===0?null:R.PEOPLE.find(p=>p.name===parsed.requestedDesigner)?.id;
  if(state>0&&!owner)R.fail('当前阶段需要填写分配设计 G4，并将文件名最后一段改为同一设计师');
  if(state===0&&parsed.requestedDesigner!=='未分配')R.fail('待分配需求请清空分配设计 G4，并将文件名最后一段改为“未分配”');
- if((old.sealed||old.items.some(i=>i.sealed))&&(state!==old.state||owner!==old.owner||changed(['M4','N4'])))R.fail('此需求已有封存资产，不能通过修改 Excel 回退状态、改派或更改确认时间');
+ if(archived&&(state!==old.state||owner!==old.owner||changed(['M4','N4'])))R.fail('此需求已有封存资产，不能通过修改 Excel 回退状态、改派或更改确认时间');
  if(state===4&&!times.completedAt&&!(old.completionFromFolder&&location.state===4&&!fields.M4&&!fields.N4))R.fail('已完结需求必须填写确认日期 M4 和确认时间 N4');
  const next=structuredClone(old),moved=state!==old.state,assigned=owner!==old.owner;
  if(dateCorrection)next.requestedAt=parsed.requestedAt;
@@ -58,7 +60,11 @@ function reconcileTask(old,parsed,fields,location,now=Date.now()){
  if(owner&&times.assignedAt&&changed(['E4','F4']))next.assignedAt=times.assignedAt;
  if(state>=2&&times.startedAt&&changed(['H4','I4']))next.startedAt=times.startedAt;
  if(state>=3&&times.reviewAt&&changed(['J4','K4']))next.reviewAt=times.reviewAt;
- if(state===4&&times.completedAt){next.completedAt=times.completedAt;next.completedMonth=R.monthKey(times.completedAt);next.completionTimeSource='workbook-confirmed'}
+ if(state===4&&times.completedAt&&(moved||changed(['M4','N4'])||!old.completedAt)){next.completedAt=times.completedAt;next.completedMonth=R.monthKey(times.completedAt);next.completionTimeSource='workbook-confirmed'}
+ const archiveChanged=state!==old.state||archiveIdentity(next)!==archiveIdentity(old);
+ if(archiveChanged&&publishing)R.fail('产物正在归档或等待回填恢复，不能修改需求或流程；请先恢复原表并完成归档');
+ if(archiveChanged&&archived)R.fail('此需求已有归档资产，不能更改已确认的需求内容；请由负责人回退任务');
+ if(old.state===4&&archiveChanged)resetArchive(next,old,now);
  next.updatedAt=now;next.version++;
  return next;
 }
@@ -132,14 +138,14 @@ class RequirementsSync{
         codeCorrection={version:current.version,previousHash:current.workbookHash,hash,from:current.code,to:parsed.code};
         return;
        }
-       const next=reconcileTask(current,parsed,fields,location);
+       const next=reconcileTask(current,parsed,fields,location,Date.now(),this.store.all('upload'));
        const event={kind:'excel-synced',actor:'nas',body:{from:current.state,to:next.state,source:location.stage,filename:location.filename,owner:next.owner,itemsChanged:itemsIdentity(current.items)!==itemsIdentity(next.items),previousPoints:R.total(current),nextPoints:R.total(next)}};
        if(next.state!==location.state){
         // Use the saved external file as the journal's guarded source; do not overwrite external edits.
         await this.nas.sync({...current,state:location.state,filename:location.filename,workbookHash:hash},next,{},event);
        }else{
         const latest=await fs.stat(file);if(latest.size!==after.size||latest.mtimeMs!==after.mtimeMs||await exists(path.join(path.dirname(file),'~$'+path.basename(file))))return;
-        this.store.atomic(()=>{this.store.put('task',task.id,next);this.store.event(event.kind,event.actor,task.id,event.body)});
+        this.store.atomic(()=>{this.store.put('task',task.id,next);cancelStaleUploads(this.store,next);this.store.event(event.kind,event.actor,task.id,event.body)});
        }
        changed++;
       }

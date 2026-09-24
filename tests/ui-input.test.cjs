@@ -53,6 +53,6 @@ test('modified workbook and permission errors are not presented as Excel editing
 
 test('completed calibration button submits the version shown when its dialog opened',async()=>{
  const start=source.indexOf("  else if(command==='calibration-confirm'){"),end=source.indexOf("  else if(command==='asset-scope')",start);assert.ok(start>=0&&end>start);let sent,notice;
- const context=vm.createContext({command:'calibration-confirm',t:{id:'t',version:8},dialogContext:{calibrationVersion:7},closeSheet:()=>{},accept:()=>{},fmt:String,toast:text=>notice=text,api:async(command,payload)=>{if(command==='calibrate-contribution'){sent=payload;return {previousPoints:1.5,nextPoints:6}}return {}}});
- await vm.runInContext('(async()=>{'+source.slice(start,end).replace('else if','if')+'})()',context);assert.equal(sent.taskId,'t');assert.equal(sent.version,7);assert.match(notice,/1.5 → 6/);
+ const context=vm.createContext({command:'calibration-confirm',t:{id:'t',version:8},dialogContext:{calibrationVersion:7,calibrationPreview:{workbookHash:'reviewed'}},closeSheet:()=>{},accept:()=>{},fmt:String,toast:text=>notice=text,api:async(command,payload)=>{if(command==='calibrate-contribution'){sent=payload;return {previousPoints:1.5,nextPoints:6}}return {}}});
+ await vm.runInContext('(async()=>{'+source.slice(start,end).replace('else if','if')+'})()',context);assert.equal(sent.taskId,'t');assert.equal(sent.version,7);assert.equal(sent.expectedHash,'reviewed');assert.match(notice,/1.5 → 6/);
 });

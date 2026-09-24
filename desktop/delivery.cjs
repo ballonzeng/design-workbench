@@ -3,11 +3,11 @@ const fs=require('node:fs/promises'),path=require('node:path');
 const {classifyDelivery,LIMITS,normalizeDeliveryFolder,ignoredDeliveryEntry}=require('../core/delivery.cjs');
 const {automaticNames}=require('../core/automatic-names.cjs');const {imageWidth}=require('../core/image-metadata.cjs');
 const {guarded}=require('../core/nas.cjs');
-async function scanDelivery(root,spec,{automatic=false}={}){
+async function scanDelivery(root,spec,{automatic=false,naming={},draft=false}={}){
  if(typeof root!=='string'||!path.isAbsolute(root))throw Error('请拖入电脑上的一个完整交付文件夹');
  root=path.resolve(root);
  const stat=await fs.lstat(root);if(!stat.isDirectory()||stat.isSymbolicLink())throw Error('请拖入整个交付文件夹，不要单独拖文件或快捷方式');
- const folder=normalizeDeliveryFolder(path.basename(root));
+ const folder=naming.repair===true?spec.base:normalizeDeliveryFolder(path.basename(root));
  // Validate the name before traversing any contents.
  if(folder!==spec.base)throw Error('交付文件夹命名不符合规则：应为「'+spec.base+'」，当前为「'+folder+'」。日期可用实际交付日期（MMDD），不必与运营确认日一致。');
  const entries=[],directories=[];
@@ -29,7 +29,7 @@ async function scanDelivery(root,spec,{automatic=false}={}){
   }
  }
  await walk();let result=classifyDelivery(spec,folder,entries,directories);
- if(automatic&&[3,4].includes(spec.namingVersion)){for(const f of result.files)if(f.kind==='output'&&spec.category==='main')f.width=await imageWidth(f.file);result=automaticNames(spec,result)}
+ if(automatic&&[3,4].includes(spec.namingVersion)){for(const f of result.files)if(f.kind==='output'&&spec.category==='main')f.width=await imageWidth(f.file);try{result=automaticNames(spec,result,naming)}catch(e){if(!draft||!e.namingIssues)throw e;result={...result,namingIssues:e.namingIssues}} }
  return {...result,root,folder,originalDirectories:directories};
 }
 module.exports={scanDelivery};

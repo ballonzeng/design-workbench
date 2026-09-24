@@ -2,6 +2,7 @@
 const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path');const os=require('node:os');const crypto=require('node:crypto');
 const {fail,STAGES,safeName,CATEGORIES,parts}=require('./rules.cjs');
 const {digest}=require('./store.cjs');const {patchWorkbook,workflowFields,identifyWorkbook}=require('./workbook.cjs');
+const {cancelStaleUploads}=require('./archive-state.cjs');
 async function exists(file){try{await fsp.lstat(file);return true}catch(e){if(e.code==='ENOENT')return false;throw e}}
 const REMOTE_LEASE_STALE_MS=120000,LOCAL_LEASE_STALE_MS=15000;
 function processAlive(pid){
@@ -130,7 +131,7 @@ class Nas{
   }
  }
  finishJob(job){
-  this.store.atomic(()=>{this.store.put('task',job.next.id,{...job.next,blocked:null});this.store.event(job.event.kind,job.event.actor,job.next.id,job.event.body);this.store.put('job',job.id,{...job,status:'done',error:null})});
+  this.store.atomic(()=>{this.store.put('task',job.next.id,{...job.next,blocked:null});cancelStaleUploads(this.store,job.next);this.store.event(job.event.kind,job.event.actor,job.next.id,job.event.body);this.store.put('job',job.id,{...job,status:'done',error:null})});
  }
  async cleanupBackup(job){if(await exists(job.backup)&&await fileHash(job.backup)===job.originalHash)await fsp.unlink(job.backup)}
  async recoverJob(job){

@@ -42,7 +42,7 @@ function icons(){window.lucide?.createIcons({attrs:{'aria-hidden':'true'}})}
 function syncBadge(){if(!data.connection?.online){$('#nas-badge').innerHTML='<span class="status-dot"></span>离线 · 显示上次同步数据';return}const ok=data.nasStatus?.connected&&!data.workbookSync?.error;$('#nas-badge').innerHTML='<span class="status-dot '+(ok?'online':'')+'"></span>'+(data.nasStatus?.connected?(data.workbookSync?.error?'NAS 同步异常':data.workbookSync?.lastCheckedAt?'同步于 '+dateTime(data.workbookSync.lastCheckedAt):'NAS 已连接 · 待检查'):'NAS 待连接')}
 async function api(command,payload={}){const result=await window.workbench.call(command,payload);if(!result.ok)throw Error(result.error);return result.value}
 function toast(message,error=false){clearTimeout(toastTimer);const box=$('#toast');box.textContent=message;box.classList.toggle('error',error);box.hidden=false;toastTimer=setTimeout(()=>box.hidden=true,error?7000:3500)}
-function errorBox(message){const target=$('#sheet-error');if(target){target.textContent=message;target.hidden=false}else toast(message,true)}
+function errorBox(message){const target=$('#sheet-error');if(target){target.textContent=message;target.hidden=false;$('#sheet-footer').hidden=false}else toast(message,true)}
 function button(label,command,extra='',primary=false,disabled=false){return '<button class="button'+(primary?' primary':'')+'" data-command="'+command+'" '+extra+(disabled?' disabled':'')+'>'+label+'</button>'}
 function empty(title,copy,action=''){return '<div class="empty">'+icon('layers-2')+'<h2>'+title+'</h2><p>'+copy+'</p>'+action+'</div>'}
 function heading(title,description,actions='',eyebrow='DESIGN WORKSPACE'){return '<div class="page-heading"><div><p class="eyebrow">'+eyebrow+'</p><h1>'+title+'</h1><p class="description">'+description+'</p></div><div class="heading-actions">'+actions+'</div></div>'}
@@ -201,11 +201,22 @@ function moveSheet(open){
  sheetMotion=dialog.animate(frames,{duration:open?(manager()?280:320):220,fill:'both'});
  const current=sheetMotion;current.onfinish=()=>{if(sheetMotion!==current)return;if(!open)dialog.close();current.cancel();dialog.style.transform='none';dialog.style.opacity='1'};
 }
+function arrangeSheet(){
+ const body=$('#sheet-body'),footer=$('#sheet-footer');
+ if(body.querySelector(':scope > .sheet-actions'))footer.replaceChildren();
+ const selfCheck=body.querySelector('#self-check')?.closest('label');if(selfCheck)footer.append(selfCheck);
+ for(const node of body.querySelectorAll(':scope > .sheet-actions, :scope > #sheet-error'))footer.append(node);
+ footer.hidden=!footer.querySelector('.sheet-actions')&&!!footer.querySelector('#sheet-error')?.hidden;
+}
 function openSheet(title,content,context={},eyebrow='设计协作'){
+ const parent=dialogContext;
+ if(eyebrow!=='TASK DETAILS'&&context.taskId===parent?.taskId&&(parent.kind==='detail'||parent.returnTaskId))context.returnTaskId=parent.taskId;
+ $('#sheet').dataset.selected='false';$('#sheet').dataset.preview='false';$('#sheet-footer').innerHTML='';$('#sheet-back').hidden=!context.returnTaskId;
+ $('#sheet').dataset.wide=['ARCHIVE','CALIBRATE CONTRIBUTION'].includes(eyebrow)?'true':'false';
  if(eyebrow==='TASK DETAILS')context.kind='detail';
  const issueTask=data.tasks.find(t=>t.id===context.taskId),issue=taskIssue(issueTask);
  content='<div id="requirement-sync-issue" class="form-error" '+(issue?'':'hidden')+'>'+esc(issueText(issueTask))+'</div>'+content;
- dialogContext=context;$('#sheet-title').textContent=title;$('#sheet-eyebrow').textContent=eyebrow;$('#sheet-body').innerHTML=content+'<div id="sheet-error" class="form-error" hidden></div>';icons();moveSheet(true);
+ dialogContext=context;$('#sheet-title').textContent=title;$('#sheet-eyebrow').textContent=eyebrow;$('#sheet-body').innerHTML=content+'<div id="sheet-error" class="form-error" role="alert" hidden></div>';arrangeSheet();$('#sheet-body').scrollTop=0;icons();moveSheet(true);
  setTimeout(()=>$('#sheet-body input, #sheet-body select, #sheet-body textarea, #sheet-body button')?.focus({preventScroll:true}),0);
 }
 function closeSheet(){moveSheet(false);dialogContext=null}
@@ -213,14 +224,14 @@ async function taskDetail(id){
  const t=data.tasks.find(t=>t.id===id);if(!t)return;
  if(!manager()&&t.assignmentId&&!t.readAt){try{await api('read',{taskId:id,assignmentId:t.assignmentId})}catch{}}
  openSheet(taskName(t),'<div class="task-detail-score"><span>标准贡献力</span><div class="point-display">'+fmt(points(t))+'<small>点</small></div></div><dl>'+[['任务状态',states[t.state]],['产品名',t.product],['品牌',t.brand],['产品69码',t.code],['运营',t.operator],['设计师',manager()?peopleName(t.owner):data.person?.name],['提出需求',dateTime(t.requestedAt)],['分配时间',dateTime(t.assignedAt)],['首次开始',dateTime(t.startedAt)],['提交待确认',dateTime(t.reviewAt)],['确认完成',dateTime(t.completedAt)],['完成封存',dateTime(t.sealedAt)],['最近更新',dateTime(t.updatedAt)],['实际设计耗时',timeText(elapsed(t))]].map(([k,v])=>'<div class="summary-line"><dt>'+k+'</dt><dd>'+esc(v)+'</dd></div>').join('')+'</dl><div style="margin-top:22px">'+t.items.map(i=>'<div class="item-row"><strong>'+esc(i.typeName)+' · '+fmt(i.points)+' 点</strong><p>'+i.qty+' '+esc(data.rates.find(r=>r.id===i.type)?.unit||'项')+(i.note?' · '+esc(i.note):'')+'</p></div>').join('')+'</div>'+ (t.importedTiming?'<div class="notice">这是从现有 NAS 导入的任务。导入前的准确耗时无法从表内小时字段还原；恢复计时后会继续准确记录。</div>':'')+'<div class="sheet-actions">'+button(icon('file-spreadsheet')+'查看需求表','open-requirement','data-task="'+id+'"',true,!connected())+(t.state===4&&(t.sealed||(t.deliveries||[]).length)?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+(manager()&&t.state===4&&t.sealed?button('恢复待封存','archive-reopen','data-task="'+id+'"'):'')+(manager()&&t.state===4?button('校准点数','calibration-open','data-task="'+id+'"',false,!connected()):'')+(manager()?button('检查重复记录','duplicate-inspect','data-task="'+id+'"'):'')+'</div><div id="history-region"></div>',{taskId:id},'TASK DETAILS');
- try{const history=await api('history',{taskId:id});if(dialogContext?.taskId===id){const names={'contribution-calibrated':'负责人校准点数',rollback:'负责人回退环节',assign:'分配 / 改派任务',start:'开始设计',pause:'暂停设计',resume:'继续计时',review:'提交运营确认',rework:'收到修改，继续设计',approve:'记录运营聊天确认',sealed:'产物封存完成','archive-reopened':'负责人恢复待封存','asset-archived':'一类产物归档成功','asset-removed':'封存文件已删除，恢复待封存','contribution-standard-updated':'贡献力改为按单个成品计算','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'NAS 原表同步'};$('#history-region').innerHTML='<ul class="history-list">'+history.slice(0,8).map(e=>'<li>'+esc(names[e.kind]||e.kind)+'<time>'+dateTime(e.at)+'</time></li>').join('')+'</ul>'}}catch{}
+ try{const history=await api('history',{taskId:id});if(dialogContext?.kind==='detail'&&dialogContext.taskId===id){const names={'contribution-calibrated':'负责人校准点数',rollback:'负责人回退环节',assign:'分配 / 改派任务',start:'开始设计',pause:'暂停设计',resume:'继续计时',review:'提交运营确认',rework:'收到修改，继续设计',approve:'记录运营聊天确认',sealed:'产物封存完成','archive-reopened':'负责人恢复待封存','asset-archived':'一类产物归档成功','asset-removed':'封存文件已删除，恢复待封存','contribution-standard-updated':'贡献力改为按单个成品计算','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'NAS 原表同步'};$('#history-region').innerHTML='<ul class="history-list">'+history.slice(0,8).map(e=>'<li>'+esc(names[e.kind]||e.kind)+'<time>'+dateTime(e.at)+'</time></li>').join('')+'</ul>'}}catch{}
 }
 async function pairPerson(id){
  const p=data.people.find(p=>p.id===id);if(!p)return;
  if(!connected()){toast('请先连接现有 NAS',true);return}
  const host=$('#host-address')?.value||data.addresses?.[0]?.address;if(!host){toast('未找到公司内网地址，请检查网络',true);return}
  openSheet('连接 '+p.name+' 的设计端','<p class="description">此连接码只绑定 '+esc(p.name)+'，使用一次后失效。</p><div class="loading-shell" style="padding:50px 0">正在生成连接码…</div>',{personId:id},'CONNECT DEVICE');
- try{const result=await api('pair-code',{personId:id,host});dialogContext={personId:id,code:result.code};$('#sheet-body').innerHTML='<p class="description">在 '+esc(p.name)+' 的电脑上安装设计端，将此连接码粘贴到首次连接页面。</p><label class="field"><span>专属设备连接码</span><textarea class="connection-code" readonly aria-label="专属连接码">'+esc(result.code)+'</textarea></label><div class="notice">有效期至 '+dateTime(result.expires)+'。负责人端保持运行，两台电脑连接公司内网。</div><div class="sheet-actions">'+button('复制连接码','copy-code','',true)+'</div>'+(p.paired?'<div class="sheet-actions">'+button('解除该人员所有旧设备','revoke','data-person="'+id+'"')+'</div>':'')+'<div id="sheet-error" class="form-error" hidden></div>';icons()}catch(e){errorBox(e.message)}
+ try{const result=await api('pair-code',{personId:id,host});dialogContext={personId:id,code:result.code};$('#sheet-body').innerHTML='<p class="description">在 '+esc(p.name)+' 的电脑上安装设计端，将此连接码粘贴到首次连接页面。</p><label class="field"><span>专属设备连接码</span><textarea class="connection-code" readonly aria-label="专属连接码">'+esc(result.code)+'</textarea></label><div class="notice">有效期至 '+dateTime(result.expires)+'。负责人端保持运行，两台电脑连接公司内网。</div><div class="sheet-actions">'+button('复制连接码','copy-code','',true)+'</div>'+(p.paired?'<div class="sheet-actions">'+button('解除该人员所有旧设备','revoke','data-person="'+id+'"')+'</div>':'')+'<div id="sheet-error" class="form-error" hidden></div>';arrangeSheet();icons()}catch(e){errorBox(e.message)}
 }
 function importSheet(){openSheet('上传需求','<p class="description">选择填写完成的公司需求表。</p><button class="upload-pick" data-command="draft-pick">'+icon('file-up')+'选择 Excel 需求表</button><div id="draft-summary"></div><div class="sheet-actions">'+button('上传需求','import-submit','disabled',true)+'</div>',{},'NEW REQUEST')}
 function reportSheet(frequency){
@@ -236,12 +247,12 @@ async function pickDraft(){
  const draft=await api('draft-pick');if(!draft)return;
  dialogContext={draft};
  $('#draft-summary').innerHTML='<div class="file-summary" style="margin-top:20px"><b>'+esc(draft.filename)+'</b><br>'+draft.items.length+' 个事项 · '+fmt(draft.items.reduce((sum,i)=>sum+i.points,0))+' 点</div>';
- $('#sheet-body [data-command="import-submit"]').disabled=false;$('#sheet-error').hidden=true;
+ $('#sheet [data-command="import-submit"]').disabled=false;$('#sheet-error').hidden=true;
 }
 function sealSheet(id){
  if(uploadJob?.status==='running'){drawUpload();toast('已有产物正在后台上传，可在右下角查看进度');return}
  const t=data.tasks.find(t=>t.id===id);if(!t||t.sealed)return;const uploaded=(t.deliveries||[]).map(d=>'<span class="status-chip">'+icon('folder-check')+esc(d.categoryName||d.category)+'</span>').join('');
- openSheet('归档最终产物','<p class="description">'+esc(t.product)+' · '+esc(t.code)+' · 运营已确认完成</p>'+(uploaded?'<div class="notice"><span>已归档</span><div class="uploaded-types">'+uploaded+'</div></div>':'')+'<div id="product-resolution" class="product-resolution"><span class="spinner"></span>正在定位产品系列…</div><div class="notice" id="seal-spec">正在读取命名规则…</div><button id="asset-dropzone" class="upload-pick asset-dropzone" data-command="asset-pick" disabled>'+icon('folder-up')+'<strong>拖入总文件夹或单个类型文件夹</strong><span>总文件夹内按主图、SKU 等类型分文件夹，也可以点击选择</span></button><p class="upload-hint">按类型文件夹分类，上传前核对原名与目标名。主图按实际宽度分组编号，详情页保留原名；工程依赖整夹保留，本地文件不修改。</p><div id="asset-summary" aria-live="polite"></div><label class="check-line"><input id="self-check" type="checkbox" disabled><span>产品系列与69码定位正确，文件夹命名正确，源文件可编辑，最终产物与运营确认内容一致。</span></label><div id="upload-progress" hidden><div class="progress-label"><span id="progress-phase">准备上传</span><b id="progress-value">0%</b></div><div class="progress-track"><div id="progress-bar" style="width:0%"></div></div></div><div class="sheet-actions">'+button('确认命名并上传','asset-upload','disabled',true)+((t.deliveries||[]).length?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+((t.deliveries||[]).length?button('全部产物已上传，完成封存','archive-finish','data-task="'+id+'"'):'')+'</div>',{taskId:id},'ARCHIVE');
+ openSheet('归档最终产物','<p class="description">'+esc(t.product)+' · '+esc(t.code)+' · 运营已确认完成</p>'+(uploaded?'<div class="notice"><span>已归档</span><div class="uploaded-types">'+uploaded+'</div></div>':'')+'<div id="product-resolution" class="product-resolution"><span class="spinner"></span>正在定位产品系列…</div><div class="notice" id="seal-spec">正在读取命名规则…</div><button id="asset-dropzone" class="upload-pick asset-dropzone" data-command="asset-pick" disabled>'+icon('folder-up')+'<strong>拖入总文件夹或单个类型文件夹</strong><span>可直接选择现有文件夹；命名不标准可在下一步纠正</span></button><p class="upload-hint">按类型文件夹分类，上传前核对原名与目标名。主图按实际宽度分组编号，详情页保留原名；工程依赖整夹保留，本地文件不修改。</p><div id="asset-summary" aria-live="polite"></div><label class="check-line"><input id="self-check" type="checkbox" disabled><span>产品系列与69码定位正确，已核对下方归档目标名称，源文件可编辑，最终产物与运营确认内容一致。</span></label><div id="upload-progress" hidden><div class="progress-label"><span id="progress-phase">准备上传</span><b id="progress-value">0%</b></div><div class="progress-track"><div id="progress-bar" style="width:0%"></div></div></div><div class="sheet-actions">'+button('确认命名并上传','asset-upload','disabled',true)+((t.deliveries||[]).length?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+((t.deliveries||[]).length?button('全部产物已上传，完成封存','archive-finish','data-task="'+id+'"'):'')+'</div>',{taskId:id},'ARCHIVE');
  loadSpec();
 }
 function productDecisionReady(context){return !context?.productMatch?.decisionRequired||!!context.productDecision}
@@ -257,7 +268,7 @@ function productResolutionHtml(match){
 async function loadSpec(){
  if(!dialogContext?.taskId)return;
  const context=dialogContext,request=Symbol();context.specRequest=request;context.selection=null;context.spec=null;
- $('#self-check').checked=false;$('#self-check').disabled=true;$('#asset-summary').innerHTML='';$('#sheet-body [data-command="asset-upload"]').disabled=true;$('#asset-dropzone').disabled=true;
+ $('#self-check').checked=false;$('#self-check').disabled=true;$('#asset-summary').innerHTML='';$('#sheet [data-command="asset-upload"]').disabled=true;$('#asset-dropzone').disabled=true;
  $('#seal-spec').textContent='正在读取命名规则…';$('#sheet-error').hidden=true;
  try{
   const spec=await api('archive-spec',{taskId:context.taskId});
@@ -268,26 +279,48 @@ async function loadSpec(){
   $('#asset-dropzone').disabled=!productDecisionReady(context);icons();
  }catch(e){if(dialogContext===context&&context.specRequest===request){$('#product-resolution').textContent='产品定位未完成';$('#seal-spec').innerHTML='<span>暂时无法读取上传规则，请处理下方原因后重试。</span>'+button('重新定位','archive-retry');errorBox(e.message)}}
 }
-async function chooseDelivery(droppedFiles){
+function deliveryNaming(){
+ const folders=Object.create(null);
+ for(const el of document.querySelectorAll('.naming-editor')){
+  const entry={category:el.querySelector('[data-naming-category]').value,date:el.querySelector('[data-naming-date]').value.trim(),outputNames:Object.create(null)};
+  for(const input of el.querySelectorAll('[data-output-path]'))if(input.value.trim())entry.outputNames[input.dataset.outputPath]=input.value.trim();
+  folders[el.dataset.folderKey]=entry;
+ }
+ return {repair:true,folders};
+}
+function renderDelivery(selection,context){
+ $('#sheet').dataset.selected='true';
+ const issues=selection.namingIssues||[],valid=!issues.length&&selection.files.length>0;context.namingDirty=false;
+ $('#self-check').disabled=!valid;
+ const sources=selection.files.filter(f=>f.kind==='source'),outputs=selection.files.filter(f=>f.kind==='output');
+ $('#asset-summary').innerHTML='<h3>命名预览与纠正</h3><p class="description">本地文件保持原样。调整类型、日期或名称后，点击“重新预览命名”。缺少序号时按原文件名顺序编号，请核对清单。</p>'+(selection.folders||[]).map(folder=>{
+  const editable=selection.files.filter(f=>f.folderKey===folder.key&&f.kind==='output'&&['six','detail'].includes(folder.category));
+  return '<section class="naming-editor" data-folder-key="'+esc(folder.key)+'"><h3>'+esc(folder.originalFolder)+'</h3><div class="naming-fields"><label class="field"><span>产物类型</span><select data-naming-category><option value="">请选择类型</option>'+(folder.skipped?'<option value="'+esc(folder.category)+'" selected>此类型已归档（可改选其他类型）</option>':'')+context.spec.categories.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===folder.category?' selected':'')+'>'+esc(c.output)+'</option>').join('')+'</select></label><label class="field"><span>交付日期（月日，例如 0924）</span><input data-naming-date value="'+esc(folder.date)+'" maxlength="4" inputmode="numeric"></label></div><p class="description">归档文件夹：'+esc(folder.folder||'选择类型后生成')+'</p>'+[...new Set((folder.namingIssues||[]).map(i=>i.message))].map(message=>'<p class="form-error">'+esc(message)+'</p>').join('')+(editable.length?'<div class="naming-faces">'+editable.map(f=>{
+   const ext=f.relativePath.match(/\.[^./]+$/)?.[0]||'',value=f.suggestedName||'';
+   return '<label><span>'+esc(f.relativePath)+'</span>'+(folder.category==='six'?'<select data-output-path="'+esc(f.relativePath)+'"><option value="">请选择实际面向</option>'+['正面','背面','左侧','右侧','顶面','底面'].map(face=>'<option value="'+esc(face+ext)+'"'+(value===face+ext?' selected':'')+'>'+face+'</option>').join('')+'</select>':'<input class="field-input" data-output-path="'+esc(f.relativePath)+'" value="'+esc(value)+'" aria-label="归档文件名">')+'</label>';
+  }).join('')+'</div>':'')+'</section>';
+ }).join('')+button('重新预览命名','asset-replan')+'<p id="naming-dirty" class="notice" hidden>命名设置已修改，请重新预览后上传。</p><div class="delivery-summary"><strong>'+esc(selection.folder)+'</strong><p>'+outputs.length+' 个产物 · '+sources.length+' 个源文件 · '+(selection.categoryCount||0)+' 类</p>'+(selection.skipped?.length?'<p>已归档，跳过：'+selection.skipped.map(esc).join('、')+'</p>':'')+'<p>源文件和完整工程放入「01.源文件」，图片产物放入「02.导出图片」。工程内部引用文件保持原名。</p><details open><summary>原名 → 归档目标（'+selection.files.length+' 个文件）</summary><ol class="naming-preview">'+selection.files.map(f=>'<li><span>'+(f.kind==='source'?'源文件':'产物')+'</span><span>'+esc(f.previewFrom||f.relativePath)+'</span><span class="name-arrow">→</span><span class="name-to">'+esc(f.previewTo||f.relative)+'</span></li>').join('')+'</ol></details></div>';icons();
+}
+async function chooseDelivery(droppedFiles,replan=false){
  const context=dialogContext;if(!context?.spec||context.busy||context.uploading)return;
+ const prior=context.selection,naming=replan?deliveryNaming():{repair:true};
  context.busy=true;context.selection=null;const zone=$('#asset-dropzone'),before=zone.innerHTML;
- zone.disabled=true;zone.classList.remove('drag-over');zone.innerHTML='<span class="spinner"></span><strong>正在识别文件夹…</strong>';
- $('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet-body [data-command="asset-upload"]').disabled=true;$('#asset-summary').innerHTML='';$('#sheet-error').hidden=true;
+ zone.disabled=true;zone.classList.remove('drag-over');zone.innerHTML='<span class="spinner"></span><strong>正在生成命名预览…</strong>';
+ $('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet [data-command="asset-upload"]').disabled=true;$('#sheet-error').hidden=true;
  try{
-  const payload={taskId:context.taskId,productDecision:context.productDecision};
+  const payload={taskId:context.taskId,productDecision:context.productDecision,naming};
   let selection;
-  if(droppedFiles){const result=await window.workbench.dropAssets(droppedFiles,payload);if(!result.ok)throw Error(result.error);selection=result.value}
+  if(replan)selection=await api('asset-replan',{...payload,selectionId:prior?.selectionId});
+  else if(droppedFiles){const result=await window.workbench.dropAssets(droppedFiles,payload);if(!result.ok)throw Error(result.error);selection=result.value}
   else selection=await api('asset-pick',payload);
-  if(dialogContext!==context||!selection)return;
-  context.selection=selection;$('#self-check').disabled=false;
-  const sources=selection.files.filter(f=>f.kind==='source'),outputs=selection.files.filter(f=>f.kind==='output');
-  $('#asset-summary').innerHTML='<div class="delivery-summary"><strong>'+esc(selection.folder)+'</strong><div class="delivery-counts"><div>'+icon('image')+'<b>'+outputs.length+'</b><span>'+(selection.spec.category==='video'?'视频产物':'图片产物')+'</span></div><div>'+icon('files')+'<b>'+sources.length+'</b><span>源文件</span></div></div>'+(selection.projectFolders.length?'<p>'+icon('folder-check')+'整夹保留：'+selection.projectFolders.map(esc).join('、')+'</p>':'')+'<p>共 '+(selection.categoryCount||1)+' 类待上传。源文件和完整工程放入「01.源文件」，图片产物文件夹放入「02.导出图片」。</p>'+(selection.skipped?.length?'<p>已归档，跳过：'+selection.skipped.map(esc).join('、')+'</p>':'')+'<details open><summary>核对命名与归类清单</summary><ul>'+selection.files.map(f=>'<li><span>'+(f.kind==='source'?'源文件':'产物')+'</span>'+esc(f.previewFrom||f.relativePath)+' → '+esc(f.previewTo||f.relative)+'</li>').join('')+'</ul></details></div>';icons();
- }catch(e){if(dialogContext===context)errorBox(e.message)}
+  if(dialogContext!==context)return;if(!selection){context.selection=prior;if(prior)renderDelivery(prior,context);return}
+  context.selection=selection;renderDelivery(selection,context);$('#asset-summary').scrollIntoView({block:'start'});
+ }catch(e){if(dialogContext===context){context.selection=prior;context.namingDirty=true;errorBox(e.message)}}
  finally{context.busy=false;if(dialogContext===context){zone.disabled=false;zone.innerHTML=before;icons()}}
 }
 async function run(element,fn){
- const before=element?.innerHTML;if(element){element.disabled=true;element.innerHTML='<span class="spinner"></span>'+ (element.textContent.trim()||'处理中')}
- try{return await fn()}catch(e){errorBox(e.message);return null}finally{if(element?.isConnected){element.disabled=false;element.innerHTML=before;icons()}}
+ const context=dialogContext,before=element?.innerHTML;if(element){element.disabled=true;element.innerHTML='<span class="spinner"></span>'+ (element.textContent.trim()||'处理中')}
+ try{return await fn()}catch(e){if(dialogContext===context)errorBox(e.message);else toast(e.message,true);return null}finally{if(element?.isConnected){element.disabled=false;element.innerHTML=before;icons()}}
 }
 async function taskAction(t,action,extra={}){
  try{await api('action',{taskId:t.id,action,version:t.version,...extra})}catch(e){
@@ -318,15 +351,15 @@ document.addEventListener('drop',e=>{
 const isSearch=el=>['task-search','asset-search','product-search'].includes(el?.id);
 document.addEventListener('compositionstart',e=>{if(isSearch(e.target))composingSearch=true});
 document.addEventListener('compositionend',e=>{if(isSearch(e.target)){composingSearch=false;query=e.target.value;render()}});
-document.addEventListener('input',e=>{if(isSearch(e.target)){query=e.target.value;if(!e.isComposing&&!composingSearch)render()}});
+document.addEventListener('input',e=>{if(e.target.closest?.('.naming-editor')){if(dialogContext)dialogContext.namingDirty=true;$('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet [data-command="asset-upload"]').disabled=true;$('#naming-dirty').hidden=false}if(isSearch(e.target)){query=e.target.value;if(!e.isComposing&&!composingSearch)render()}});
 document.addEventListener('change',async e=>{
  if(e.target.id==='asset-person'){assetPerson=e.target.value;render();return}
  if(e.target.id==='asset-date'){assetDate=e.target.value;render();return}
  if(e.target.id==='product-group-choice'){
   dialogContext.productDecision=e.target.value?(e.target.value==='new'?{mode:'new'}:{mode:'group',groupId:e.target.value}):null;
-  $('#asset-dropzone').disabled=!productDecisionReady(dialogContext);$('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet-body [data-command="asset-upload"]').disabled=true;$('#asset-summary').innerHTML='';return;
+  $('#asset-dropzone').disabled=!productDecisionReady(dialogContext);$('#self-check').checked=false;$('#self-check').disabled=true;$('#sheet [data-command="asset-upload"]').disabled=true;$('#asset-summary').innerHTML='';return;
  }
- if(e.target.id==='self-check'){$('#sheet-body [data-command="asset-upload"]').disabled=!(e.target.checked&&dialogContext?.selection);return}
+ if(e.target.id==='self-check'){$('#sheet [data-command="asset-upload"]').disabled=!(e.target.checked&&dialogContext?.selection&&!dialogContext.namingDirty&&!dialogContext.selection.namingIssues?.length);return}
  if(e.target.dataset.preference)try{await api('preferences',{[e.target.dataset.preference]:e.target.checked})}catch(err){toast(err.message,true)}
 });
 document.addEventListener('submit',e=>{
@@ -340,7 +373,9 @@ document.addEventListener('click',async e=>{
  const el=e.target.closest('button');if(!el||el.disabled)return;if(el.dataset.view){navigate(el.dataset.view);return}if(el.dataset.filter!==undefined){filter=el.dataset.filter;render();return}
  const command=el.dataset.command,t=data.tasks.find(t=>t.id===el.dataset.task);
  if(command==='archive-retry'){await loadSpec();return}
+ if(command==='asset-replan'){await chooseDelivery(null,true);return}
  if(command==='close-sheet'){closeSheet();return}
+ if(command==='sheet-back'){const id=dialogContext?.returnTaskId;if(id)await taskDetail(id);return}
  if(command==='index-refresh'){await loadPage(view,true);return}
  if(command==='upload-dismiss'){if(uploadJob?.status!=='running'){uploadJob=null;drawUpload()}return}
  if(command==='upload-task'){sealSheet(uploadJob.taskId);return}
@@ -365,7 +400,7 @@ document.addEventListener('click',async e=>{
   openSheet('暂停设计计时','<label class="field"><span>暂停原因</span><select id="pause-reason">'+['等待素材','等待需求补充','插单中断','暂时离开'].map(s=>'<option>'+s+'</option>').join('')+'</select></label><div class="sheet-actions">'+button('确认暂停','pause-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id},'PAUSE');return;
  }
  if(command==='calibration-open'){
-  openSheet('校准已完结任务点数','<p class="description">'+esc(taskName(t))+' · 当前 '+fmt(points(t))+' 点</p><div class="notice">在 NAS 原需求表中修改事项类型、数量或增删事项行，保存并关闭 Excel，再点击下方同步校准。保留原完成月份、耗时、封存状态与交付文件；历史报表应用本次校准。产品、69码、设计师及流转时间不能同时修改。</div><div class="sheet-actions">'+button('打开需求表','open-requirement','data-task="'+t.id+'"')+button('同步校准','calibration-confirm','data-task="'+t.id+'"',true)+'</div><div id="sheet-error" class="form-error" hidden></div>',{taskId:t.id,calibrationVersion:t.version},'CALIBRATE CONTRIBUTION');return;
+  openSheet('校准已完结任务点数','<p class="description">'+esc(taskName(t))+' · 当前 '+fmt(points(t))+' 点</p><ol class="calibration-steps"><li>打开原需求表，修改事项类型、数量，或增删事项。</li><li>保存并关闭 Excel，读取变更预览。</li><li>核对前后点数，再确认应用。</li></ol><div class="notice">保留完成月份、耗时、封存状态和交付文件，历史报表同步使用校准点数。产品、69码、设计师及流转时间请分别处理。</div><div id="calibration-preview"></div><div class="sheet-actions">'+button('打开需求表','open-requirement','data-task="'+t.id+'"')+button('读取变更预览','calibration-preview','data-task="'+t.id+'"',true)+button('确认应用校准','calibration-confirm','data-task="'+t.id+'" disabled',true)+'</div>',{taskId:t.id,calibrationVersion:t.version},'CALIBRATE CONTRIBUTION');return;
  }
  if(command==='reassign-open'){
   openSheet('改派任务','<p class="description">'+esc(taskName(t))+' · 保留原设计记录，通知新的设计师。</p><label class="field"><span>新的设计负责人</span><select id="reassign-person">'+data.people.filter(p=>!p.removed).map(p=>'<option value="'+p.id+'" '+(p.id===t.owner?'disabled':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><div class="sheet-actions">'+button('确认改派','reassign-confirm','data-task="'+t.id+'"',true)+'</div>',{taskId:t.id},'REASSIGN');return;
@@ -376,8 +411,16 @@ document.addEventListener('click',async e=>{
    const details=[];if(sync?.taskIssues)details.push(sync.taskIssues+' 份原表需要处理，请查看任务提示');if(sync?.importIssues)details.push(sync.importIssues+' 份需求未能导入');if(sync?.imported)details.push('新导入 '+sync.imported+' 份');if(sync?.relinked)details.push('重新关联 '+sync.relinked+' 份改名需求');if(sync?.repaired)details.push('修复 '+sync.repaired+' 个重复任务');if(sync?.assetsReopened)details.push(sync.assetsReopened+' 个任务恢复待封存');
    toast(sync?.error||(!sync||sync.checked===false?'尚未检查 NAS，请确认负责人服务已连接':details.length?'NAS 检查完成：'+details.join('，'):command==='refresh-completed'?'已完结需求及归档文件已重新检查':'进行中任务已刷新；已完结内容保留缓存'),!!sync?.error||!!sync?.taskIssues||!!sync?.importIssues||!sync||sync.checked===false)
   }
+  else if(command==='calibration-preview'){
+   const context=dialogContext;context.calibrationPreview=null;$('#sheet [data-command="calibration-confirm"]').disabled=true;
+   const result=await api('calibrate-contribution',{taskId:t.id,version:context.calibrationVersion,preview:true});if(dialogContext!==context)return;
+   context.calibrationPreview=result;$('#sheet').dataset.preview='true';const item=i=>i?esc(i.typeName)+'<br>'+fmt(i.qty)+' 项 · '+fmt(i.points)+' 点':'—';
+   $('#calibration-preview').innerHTML='<div class="calibration-total"><span>'+fmt(result.previousPoints)+' 点</span><span>→</span><strong>'+fmt(result.nextPoints)+' 点</strong></div>'+(result.changes.length?'<table class="calibration-items"><thead><tr><th>行</th><th>原事项</th><th>校准后</th><th>变化</th></tr></thead><tbody>'+result.changes.map(c=>'<tr><td>'+c.row+'</td><td>'+item(c.before)+'</td><td>'+item(c.after)+'</td><td>'+(!c.before?'新增':!c.after?'删除':fmt(c.after.points-c.before.points)+' 点')+'</td></tr>').join('')+'</tbody></table>':'<p class="notice">事项与点数没有变化，无需重复校准。</p>');
+   $('#sheet [data-command="calibration-confirm"]').disabled=!result.changes.length;$('#calibration-preview').scrollIntoView({block:'start'});
+  }
   else if(command==='calibration-confirm'){
-   const result=await api('calibrate-contribution',{taskId:t.id,version:dialogContext.calibrationVersion});closeSheet();accept(await api('snapshot'));toast('点数已校准：'+fmt(result.previousPoints)+' → '+fmt(result.nextPoints)+' 点');
+   const preview=dialogContext.calibrationPreview;if(!preview)throw Error('请先读取变更预览');
+   const result=await api('calibrate-contribution',{taskId:t.id,version:dialogContext.calibrationVersion,expectedHash:preview.workbookHash});closeSheet();accept(await api('snapshot'));toast('点数已校准：'+fmt(result.previousPoints)+' → '+fmt(result.nextPoints)+' 点');
   }
   else if(command==='asset-scope'){assetScope=el.dataset.scope;render()}
   else if(command==='test-notification'){await api('test-notification');toast('已发送测试提醒；声音遵循当前开关和 Windows 通知设置')}
