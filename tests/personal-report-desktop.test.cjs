@@ -18,7 +18,7 @@ function router({role='designer',version=1,canceled=false,offline=false}={}){
 const options={frequency:'week',anchor:'2026-09-24'};
 test('desktop personal export reaches authenticated RPC and saves a real xlsx using server identity',async()=>{
  const r=router(),result=await r.handle({...options,personId:'lv',owner:'lv',personName:'伪造姓名'});
- assert.equal(result.counts.tasks,1);assert.equal(result.counts.points,2);
+ assert.equal(result.counts.tasks,1);assert.equal(result.counts.items,1);
  assert.deepEqual(r.calls.map(c=>c.command),['snapshot','personal-report-data']);
  assert.equal(r.calls[1].payload.personId,undefined);assert.equal(r.calls[1].payload.owner,undefined);
  assert.match(r.dialogs[0].defaultPath,/洪华/);assert.match(r.dialogs[0].defaultPath,/\.xlsx$/);

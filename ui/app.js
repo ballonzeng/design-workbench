@@ -152,11 +152,10 @@ function productsPage(){
 function personalReportsPage(){
  const ready=!!data.connection?.online&&!!data.personalReportVersion;
  const message=!data.connection?.online?'连接负责人端后即可导出。':!data.personalReportVersion?'请先更新负责人主机，才能导出个人任务明细。':'导出当前登录人 '+esc(data.person?.name||'')+' 的任务记录。';
- return heading('我的任务明细','按确认完成时间统计个人工作量，直接导出 Excel。','','MY WORK EXPORT')+
+ return heading('我的任务明细','日期、69码、对接运营、设计者、任务名、事项明细。','','MY WORK EXPORT')+
  '<p class="notice">'+message+'</p>'+
- '<div class="report-grid">'+[['week','周任务明细','按周一至周日统计，适合每周工作汇报。','calendar-days'],['month','月任务明细','按自然月统计，便于核对每月完成任务与点数。','calendar-range']].map(([frequency,title,copy,i])=>'<article class="report-card"><span class="report-icon '+frequency+'">'+icon(i)+'</span><h2>'+title+'</h2><p>'+copy+'</p>'+button('选择日期并导出','personal-report-open','data-frequency="'+frequency+'"',true,!ready)+'</article>').join('')+'</div>'+
- '<div class="report-note">'+icon('calendar')+'<div><strong>自选统计日期</strong><p>包含开始日和结束日，最多 366 天。</p></div>'+button('自选日期','personal-report-open','data-frequency="custom"',false,!ready)+'</div>'+
- '<div class="report-note">'+icon('info')+'<div><strong>统计口径</strong><p>已确认、未封存的任务也计入；待确认和推定完成时间不计入正式完成合计。数量取需求事项，详情页的“张”和“屏”分别统计；不能确定类别的事项保留原名。历史缺失和点数校准会在表内注明。</p></div></div>';
+ '<div class="report-grid">'+[['week','周任务明细','选择周一至周日的个人任务。','calendar-days'],['month','月任务明细','选择一个自然月的个人任务。','calendar-range']].map(([frequency,title,copy,i])=>'<article class="report-card"><span class="report-icon '+frequency+'">'+icon(i)+'</span><h2>'+title+'</h2><p>'+copy+'</p>'+button('选择日期并导出','personal-report-open','data-frequency="'+frequency+'"',true,!ready)+'</article>').join('')+'</div>'+
+ '<div class="report-note">'+icon('calendar')+'<div><strong>自选日期</strong><p>选择开始日和结束日。</p></div>'+button('自选日期','personal-report-open','data-frequency="custom"',false,!ready)+'</div>';
 }
 function reportsPage(){
  return heading('数据分析导出','按周或按月生成结构化 Excel，直接交给 AI 做人员、任务、产品和流程分析。','','ANALYTICS EXPORT')+
@@ -270,7 +269,7 @@ function personalReportSheet(frequency='week'){
  openSheet('导出我的任务明细','<p class="description">'+esc(data.person?.name||'')+' · '+(custom?'选择开始日和结束日（均包含在内）。':weekly?'选择这一周内的任意一天，统计周一至周日。':'选择目标月份，统计整个自然月。')+'</p>'+
  (custom?dateField('personal-start','开始日期',today,'day')+dateField('personal-end','结束日期',today,'day'):dateField('personal-anchor',weekly?'选择周':'选择月份',today,frequency))+
  (weekly?'<div class="calendar-actions">'+button('本周','personal-report-quick','data-offset="0"')+button('上周','personal-report-quick','data-offset="-7"')+'</div>':'')+
- '<p id="personal-range" class="notice"></p><div class="report-sheet-list"><span>'+icon('user')+'仅导出当前登录人的任务</span><span>'+icon('table-2')+'任务明细、事项明细、个人汇总与统计说明</span><span>'+icon('circle-check')+'按确认完成时间统计；尚未确认的任务不计入</span></div><div class="sheet-actions">'+button(icon('file-down')+'导出 Excel','personal-report-export','',true)+'</div>',{frequency},'MY WORK EXPORT');
+ '<p id="personal-range" class="notice"></p><div class="sheet-actions">'+button(icon('file-down')+'导出 Excel','personal-report-export','',true)+'</div>',{frequency},'MY WORK EXPORT');
  updatePersonalRange();
 }
 function updatePersonalRange(){
@@ -485,7 +484,7 @@ document.addEventListener('click',async e=>{
   else if(command==='personal-report-export'){
    const context=dialogContext;
    const result=await api('export-personal-report',{frequency:context.frequency,anchor:$('#personal-anchor')?.value,startDate:$('#personal-start')?.value,endDate:$('#personal-end')?.value});
-   if(result){if(dialogContext===context)closeSheet();toast('已导出 '+result.label+'：'+result.counts.tasks+' 个完成任务，'+fmt(result.counts.points)+' 点'+(result.counts.excluded?'；另有 '+result.counts.excluded+' 项待核对':'')+(result.counts.warnings?'；存在数据说明，请查看 Excel 的数据问题页':''))}
+   if(result){if(dialogContext===context)closeSheet();toast('已导出 '+result.counts.tasks+' 个任务')}
   }
   else if(command==='report-export'){
    const result=await api('export-report',{frequency:dialogContext.frequency,anchor:$('#report-anchor').value});

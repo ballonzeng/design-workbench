@@ -19,6 +19,7 @@ app.whenReady().then(async()=>{
    if(command==='export-personal-report'){
     const source=await service.call(actor(),'personal-report-data',payload);
     const report=createPersonalReport(source.tasks,{...payload,...source});
+    assert.equal(report.sheets.length,1);assert.deepEqual(report.sheets[0].rows[0],['日期','69码','对接运营','设计者','任务名','事项明细']);
     exportResults.push({payload,counts:report.counts});
     if(cancelSave)return {ok:true,value:null};
     const file=path.join(out,'个人任务明细-测试数据.xlsx');fs.writeFileSync(file,report.bytes);
@@ -51,7 +52,7 @@ app.whenReady().then(async()=>{
  await click('[data-offset="-7"]');const lastWeek=await evaluate(`document.querySelector('#personal-anchor').value`);assert.equal(Date.parse(thisWeek)-Date.parse(lastWeek),7*86400000);
  await click('[data-offset="0"]');
  await click('#personal-anchor');assert(await evaluate(`document.querySelector('.date-picker').open`));await click('.date-picker [data-close]');
- await click('[data-command="personal-report-export"]');assert.equal(exportResults.at(-1).counts.tasks,1);assert.equal(exportResults.at(-1).counts.points,13.4);assert(!await evaluate(`document.querySelector('#sheet').open`));
+ await click('[data-command="personal-report-export"]');assert.equal(exportResults.at(-1).counts.tasks,1);assert.equal(exportResults.at(-1).counts.items,3);assert(!await evaluate(`document.querySelector('#sheet').open`));
  await click('[data-frequency="month"]');await audit('monthly-export',true);await click('#personal-anchor');assert(await evaluate(`!!document.querySelector('.calendar-months')`));await click('.date-picker [data-close]');
  cancelSave=true;await click('[data-command="personal-report-export"]');assert(await evaluate(`document.querySelector('#sheet').open`));cancelSave=false;await click('[data-command="close-sheet"]');
  await click('[data-frequency="custom"]');await audit('custom-export',true);
