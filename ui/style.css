@@ -291,3 +291,5 @@ dialog.date-picker{max-height:calc(100dvh - 70px);transform:none!important;anima
 @media(max-width:760px){.window-credit{display:none}.window-lockup{max-width:calc(100% - 280px)}}
 
 #sheet{border-radius:22px}
+
+.work-month-row .calendar-trigger{max-width:230px;flex:1;min-width:0}
