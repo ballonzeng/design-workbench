@@ -131,4 +131,4 @@ function workbook(sheets,createdAt){
  return Buffer.from(zipSync(files,{level:6}));
 }
 
-module.exports={createReport,periodRange,ymd};
+module.exports={createReport,periodRange,ymd,workbook};

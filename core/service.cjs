@@ -88,7 +88,7 @@ class Service extends EventEmitter{
   const nasStatus={connected:!!this.nas.lease&&!this.nas.error&&!this.startError,error:this.startError||this.nas.error};
   const serverTime=Date.now(),workPolicies=this.store.get('setting','workPolicies')||{},month=R.monthKey(serverTime),range=require('./report.cjs').periodRange('month',month+'-01'),monthlyCalendar=W.capacity(range.start,range.end,workPolicies,serverTime);
   for(const task of tasks){const timing=W.taskTiming(task,0,serverTime,workPolicies);task.effectiveElapsedMs=timing.hours*3600000;task.effectiveTimingComplete=timing.complete}
-  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,
+  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,personalReportVersion:1,
    ...(actor.role==='manager'?{config:this.nas.config||this.store.get('setting','nas'),port:this.port,jobs:this.store.all('job').filter(j=>j.status==='prepared').map(j=>({id:j.id,taskId:j.next?.id,error:j.error||'等待恢复'})),importIssues:this.store.get('setting','importIssues')||[],events:this.store.recent(30)}:{})};
  }
  async importFile(bytes,filename,options={},state=0,existing=false){
@@ -207,6 +207,14 @@ class Service extends EventEmitter{
    const policy=W.validatePolicy(payload.policy);return this.store.exclusive(()=>{const revision=this.store.get('setting','workPolicyRevision')||0;if(payload.revision!==revision)R.fail('工作日规则已更新，请重新打开后修改',409);const policies=this.store.get('setting','workPolicies')||{};this.store.atomic(()=>{policies[payload.month]=policy;this.store.put('setting','workPolicies',policies);this.store.put('setting','workPolicyRevision',revision+1);this.store.event('work-policy-updated',actor.personId,null,{month:payload.month,policy,revision:revision+1})});this.broadcast();return {saved:true,revision:revision+1}});
   }
   if(command==='report-data'){R.manager(actor);const {periodRange}=require('./report.cjs'),range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));return {tasks:history.tasks,events:this.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),generatedAt,unavailable:history.unavailable,workPolicies:this.store.get('setting','workPolicies')||{},removedPeople:this.store.removedMembers()}}
+  if(command==='personal-report-data'){
+   if(actor.role!=='designer')R.fail('个人任务明细仅设计师可导出',403);
+   const range=require('./personal-report.cjs').personalRange(payload),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));
+   // Missing versions cannot prove historical ownership. Never disclose their IDs,
+   // filenames or count, or infer their former owner from today's assignment.
+   const unavailable=history.unavailable.length?[{reason:'部分历史记录无法还原当时归属和明细，已排除于本次报表；请核对原始记录'}]:[];
+   return {tasks:history.tasks.filter(task=>task.owner===actor.personId),personId:actor.personId,personName:R.PEOPLE.find(person=>person.id===actor.personId).name,generatedAt,unavailable};
+  }
   if(command==='snapshot')return this.snapshot(actor);
   if(command==='product-groups'&&!payload.force&&this.products.indexReady()){R.manager(actor);return this.products.all()}
   if(command==='sync-requirements'){if(payload.includeCompleted)R.manager(actor);return this.requirementsSync.check(true,{includeCompleted:!!payload.includeCompleted})}

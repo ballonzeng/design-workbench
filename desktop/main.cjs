@@ -6,6 +6,7 @@ const {scanDelivery}=require('./delivery.cjs');
 const {normalizeDeliveryFolder,ignoredDeliveryEntry}=require('../core/delivery.cjs');
 const pkg=require('../package.json'),role=pkg.clientRole==='designer'?'designer':'manager';
 const {createReport,periodRange}=require('../core/report.cjs');
+const {createPersonalReport,personalRange}=require('../core/personal-report.cjs');
 const {notificationOptions}=require('./notifications.cjs');
 const name=role==='manager'?'设计协作·负责人端':'设计协作·设计端';
 const smokeIndex=process.argv.indexOf('--smoke-test'),smoke=smokeIndex>=0,smokeOutput=smoke?process.argv[smokeIndex+1]:null;
@@ -130,7 +131,7 @@ async function uploadOne(payload){
   const result=await client.rpc('archive-commit',{uploadId:batch.id});chosen.delete(payload.selectionId);await refresh();return result;
  }finally{uploading=false}
 }
- const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan','work-policy-save','work-calendar-preview']);
+ const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-personal-report','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan','work-policy-save','work-calendar-preview']);
 async function handle(command,payload){
  if(!COMMANDS.has(command))throw Error('不支持的操作');
  if(command==='snapshot')return refresh();
@@ -169,6 +170,20 @@ async function handle(command,payload){
   const result=await dialog.showOpenDialog(win,{title:'上传需求表',properties:['openFile'],filters:[{name:'公司需求表',extensions:['xlsx']}]});if(result.canceled)return null;
   const file=result.filePaths[0];if((await fsp.stat(file)).size>50*1024*1024)throw Error('需求表不能超过 50 MB');
    return invoke('draft',{filename:path.basename(file),...(settings.remoteManager?{bytesBase64:(await fsp.readFile(file)).toString('base64')}:{bytes:await fsp.readFile(file)})});
+  }
+  if(command==='export-personal-report'){
+   if(role!=='designer')throw Error('请在设计端导出自己的任务明细');
+   const options={frequency:payload.frequency,anchor:payload.anchor,startDate:payload.startDate,endDate:payload.endDate};
+   personalRange(options);
+   const snapshot=await invoke('snapshot');
+   if(!snapshot.personalReportVersion)throw Error('请先更新负责人主机，才能导出个人任务明细');
+   const source=await invoke('personal-report-data',options);
+   const report=createPersonalReport(source.tasks,{...options,personId:source.personId,personName:source.personName,generatedAt:source.generatedAt,unavailable:source.unavailable});
+   const filename='我的任务明细-'+source.personName+'-'+report.range.fileKey+'.xlsx';
+   const saveResult=await dialog.showSaveDialog(win,{title:'导出我的任务明细',defaultPath:path.join(app.getPath('documents'),filename),filters:[{name:'Excel 工作簿',extensions:['xlsx']}]});
+   if(saveResult.canceled||!saveResult.filePath)return null;
+   await fsp.writeFile(saveResult.filePath,report.bytes,{flag:'w'});
+   return {path:saveResult.filePath,label:report.range.label,counts:report.counts};
   }
   if(command==='export-report'){
    if(role!=='manager')throw Error('仅负责人可以导出分析数据');
