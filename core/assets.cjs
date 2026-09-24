@@ -71,9 +71,7 @@ function validateManifest(task,item,files,delivery){
     relative=file.name;
    }else{
     if(!IMAGE_EXT.has(ext)||file.folder!==spec.base)fail('封存失败，产物文件夹命名不符合规则。');
-    if(spec.category==='six'){
-     if(!['正面','背面','左侧','右侧','顶面','底面'].includes(stem))fail('封存失败，六面图文件名不符合规则。');
-    }else{
+    if(spec.category!=='six'){
      const prefix=spec.category==='detail'?folderName(item.product)+'-详情':CATEGORIES.find(c=>c.id===spec.category).output;
      if(!stem.startsWith(prefix)||!/^\d{2}$/.test(stem.slice(prefix.length))||Number(stem.slice(prefix.length))<1)fail('封存失败，图片画板命名不符合规则。');
     }
@@ -87,7 +85,7 @@ function validateManifest(task,item,files,delivery){
  if(spec.category!=='video'&&!sources.length)fail('请选择可编辑的源文件');
  if(spec.category!=='project'&&outputs.length!==spec.expectedCount)fail('最终产物数量应为 '+spec.expectedCount+'，当前为 '+outputs.length);
  if(total>20*1024**3)fail('本次封存总大小不能超过 20 GB，请拆分事项');
- if(spec.category==='six'&&outputs.length!==6)fail('六面图需要完整的 6 个面');
+
  if(spec.category!=='video'&&spec.category!=='six'&&outputs.length){
   const nums=outputs.map(f=>Number(path.basename(f.name,path.extname(f.name)).slice(-2))).sort((a,b)=>a-b);
   if(nums.some((n,i)=>n!==i+1))fail('图片序号需要从 01 连续编号');

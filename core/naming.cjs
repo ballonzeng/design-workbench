@@ -25,7 +25,7 @@ function nameDelivery(spec,classified,{repair=false}={}){
    if(spec.category==='video')relative=spec.base+ext;
    else{
     const patterns={main:/^主图\d{2}$/,sku:/^SKU\d{2}$/,creative:/^创意图\d{2}$/,six:/^(正面|背面|左侧|右侧|顶面|底面)$/};
-    const valid=spec.category==='detail'?stem.startsWith(spec.product+'-详情')&&/^\d{2}$/.test(stem.slice((spec.product+'-详情').length)):patterns[spec.category]?.test(stem);
+    const valid=spec.category==='six'||(spec.category==='detail'?stem.startsWith(spec.product+'-详情')&&/^\d{2}$/.test(stem.slice((spec.product+'-详情').length)):patterns[spec.category]?.test(stem));
     if(!valid)fail('图片名不符合画板规则：'+f.relativePath+'。请从源文件按正确画板名重新导出，程序不会二次重命名图片');
     relative=spec.base+'/'+path.posix.basename(f.relativePath);
    }

@@ -16,8 +16,8 @@ test('SKU and creative images renumber while details retain originals',()=>{
 test('project texture names and hierarchy survive; duplicate source targets rejected',()=>{
  const r=automaticNames(spec,{projectFolders:['模型'],directories:[],files:[source,{relativePath:'模型/场景.c4d',kind:'source'},{relativePath:'模型/tex/a1.jpg',kind:'source'},image('图1.jpg',750)]});assert.equal(r.files[2].relative,'0907-吕慧芸-c4d/tex/a1.jpg');assert.equal(r.files[2].kind,'source');assert.throws(()=>automaticNames(spec,{...raw([image('a1.jpg',750)]),files:[source,{...source,relativePath:'另一个.psd'},image('a1.jpg',750)]}),/重名/);
 });
-test('six faces require semantic labels and multiple video target collisions are rejected',()=>{
- assert.throws(()=>automaticNames({base:'0907-吕慧芸-六面图',category:'six'},raw([image('图1.png')])),/实际面/);const videos=automaticNames({base:'0907-吕慧芸-创意视频',category:'video'},raw([image('2.mp4'),image('1.mp4')]));assert.equal(videos.files[1].name,'0907-吕慧芸-创意视频02.mp4');assert.equal(videos.files[2].name,'0907-吕慧芸-创意视频01.mp4');
+test('six images keep arbitrary names and videos get distinct targets',()=>{
+ assert.equal(automaticNames({base:'0907-吕慧芸-六面图',category:'six'},raw([image('图1.png')])).files[1].name,'图1.png');const videos=automaticNames({base:'0907-吕慧芸-创意视频',category:'video'},raw([image('2.mp4'),image('1.mp4')]));assert.equal(videos.files[1].name,'0907-吕慧芸-创意视频02.mp4');assert.equal(videos.files[2].name,'0907-吕慧芸-创意视频01.mp4');
 });
 
 test('unambiguous folder spelling variations normalize without changing date or owner',()=>{

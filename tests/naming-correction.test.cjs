@@ -5,6 +5,16 @@ const task={id:'t',state:4,owner:'lv',version:1,completedAt:Date.UTC(2026,8,23,4
 const info=archiveSpec(task),getSpec=async folder=>archiveSpec(task,null,folder);
 async function dir(t,name,files){const temp=await fs.mkdtemp(path.join(os.tmpdir(),'naming-correction-')),root=path.join(temp,name);await fs.mkdir(root);t.after(()=>fs.rm(temp,{recursive:true,force:true}));for(const f of files){await fs.mkdir(path.dirname(path.join(root,f)),{recursive:true});await fs.writeFile(path.join(root,f),'test')}return root}
 const manifest=selected=>validateTaskManifest(task,selected.files.map(f=>({...f,sha256:'a'.repeat(64)})),{version:1,namingVersion:4,folder:selected.folder,directories:selected.originalDirectories,naming:selected.naming});
+test('six images preserve screenshot names and arbitrary names without changing local files',async t=>{
+ const names=['0923-洪华-六面图 (1).jpg','包装角度随手拍.jpg','正面.jpg','第二组/正面.jpg'];
+ const root=await dir(t,'六面图',['源稿.psd',...names]);
+ const result=await planSelection(root,info,getSpec,{repair:true});assert.equal(result.preview.namingIssues.length,0);
+ const selected=result.batch[0],server=manifest(selected);assert.deepEqual(server.files.map(f=>f.relative),selected.files.map(f=>f.relative));
+ assert(selected.files.some(f=>f.name===names[0]));assert(selected.files.some(f=>f.name===names[1]));assert.equal(new Set(selected.files.map(f=>f.relative.toLowerCase())).size,5);
+ assert(selected.files.some(f=>f.kind==='source'&&f.name==='0923-吕慧芸-六面图.psd'));
+ for(const name of names)assert.equal(await fs.readFile(path.join(root,name),'utf8'),'test');
+ for(const invalid of ['../escape.jpg','x.exe']){const rejected=await planSelection(root,info,getSpec,{repair:true,folders:{'':{category:'six',outputNames:{[names[0]]:invalid}}}});assert(rejected.preview.namingIssues.length)}
+});
 test('nonstandard folder and duplicate source names are repaired identically on client and server',async t=>{
  const root=await dir(t,'9月24日_某人_创意图_final',['设计稿.psd','改稿.psd','成品.jpg','另一张.jpg']);const before=await fs.readdir(root);
  const result=await planSelection(root,info,getSpec);assert.equal(result.preview.namingIssues.length,0);assert.equal(result.batch.length,1);assert.equal(result.batch[0].folder,'0923-吕慧芸-创意图');
@@ -18,10 +28,10 @@ test('unknown category stays correctable and no valid sibling hides unresolved f
  assert.match(next.preview.files.find(f=>f.relativePath==='红瓶.jpg').suggestedName,/01-红瓶-SKU.jpg/);
  const invalid=await planSelection(root,info,getSpec,{repair:true,folders:{'不规范名字':{category:'detail',date:'9932'}}});assert.ok(invalid.preview.namingIssues.length);
 });
-test('six-face corrections remain editable for missing and duplicate faces',async t=>{
- const root=await dir(t,'六面图',['源稿.psd','a.jpg','b.jpg']);let result=await planSelection(root,info,getSpec);assert.equal(result.preview.files.length,3);assert.equal(result.preview.namingIssues.length,2);
+test('six images preserve free names and repair duplicate targets',async t=>{
+ const root=await dir(t,'六面图',['源稿.psd','a.jpg','b.jpg']);let result=await planSelection(root,info,getSpec);assert.equal(result.preview.files.length,3);assert.equal(result.preview.namingIssues.length,0);
  const set=names=>({repair:true,folders:{'':{category:'six',date:'0924',outputNames:names}}});
- result=await planSelection(root,info,getSpec,set({'a.jpg':'正面.jpg','b.jpg':'正面.jpg'}));assert.equal(result.preview.namingIssues.length,2);assert.equal(result.preview.files.length,3);
+ result=await planSelection(root,info,getSpec,set({'a.jpg':'正面.jpg','b.jpg':'正面.jpg'}));assert.equal(result.preview.namingIssues.length,0);assert.equal(result.preview.files.length,3);
  result=await planSelection(root,info,getSpec,set({'a.jpg':'正面.jpg','b.jpg':'背面.jpg'}));assert.equal(result.preview.namingIssues.length,0);assert.deepEqual(manifest(result.batch[0]).files.map(f=>f.relative),result.batch[0].files.map(f=>f.relative));
 });
 test('details can be renamed in the preview but paths and extension changes are rejected',async t=>{

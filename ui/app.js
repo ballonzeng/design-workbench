@@ -57,9 +57,9 @@ function personCard(p,index){
 }
 function calendarSummary(){const c=data.monthlyCalendar;return '<div class="calendar-summary"><div><strong>本月目标 '+fmt(data.monthlyCapacity??0)+' 点 / 人</strong><p>'+(c?c.workdays+' 个工作日 · '+fmt(c.hours)+' 小时 · 截至现在 '+fmt(c.elapsedPoints)+' 点'+(c.verified?'':' · 节假日未核实，仅为暂估'):'请升级负责人主机以读取工作日规则')+'</p></div>'+button('工作日与目标设置','work-policy-open')+'</div>'}
 function teamMetric(kind){
- const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>p.title==='设计师'&&!p.removed&&personSummary(p).free),titles=['在手任务','在手贡献力','可接新任务'];
+ const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>!p.removed&&personSummary(p).free),titles=['在手任务','在手贡献力','可接新任务'];
  const rows=kind===2?free.map(p=>'<button class="drill-row" data-command="person-tasks" data-person="'+p.id+'"><span><strong>'+esc(p.name)+'</strong><small>'+esc(personSummary(p).label)+'</small></span>'+icon('arrow-up-right')+'</button>'):active.sort((a,b)=>kind===1?points(b)-points(a):a.state-b.state).map(t=>'<button class="drill-row" data-command="task-detail" data-task="'+esc(t.id)+'"><span><strong>'+esc(taskName(t))+'</strong><small>'+esc(t.brand)+' · '+esc(peopleName(t.owner))+' · '+states[t.state]+'</small></span><b>'+fmt(points(t))+' 点</b></button>');
- openSheet(titles[kind]+'明细','<p class="description">'+(kind===2?'只包含当前没有待做、设计中或暂停任务的设计师；仍需结合实际安排。':'包含待设计、设计中和待确认的任务，共 '+active.length+' 项，'+fmt(active.reduce((n,t)=>n+points(t),0))+' 点。')+'</p>'+ (rows.join('')||'<p class="notice">暂无匹配记录</p>'),{},'TEAM DETAILS');
+ openSheet(titles[kind]+'明细','<p class="description">'+(kind===2?'只包含当前没有待做、设计中或暂停任务的成员；仍需结合实际安排。':'包含待设计、设计中和待确认的任务，共 '+active.length+' 项，'+fmt(active.reduce((n,t)=>n+points(t),0))+' 点。')+'</p>'+ (rows.join('')||'<p class="notice">暂无匹配记录</p>'),{},'TEAM DETAILS');
 }
 function policyInput(){const sessions=$('#work-sessions').value.split(/[,，\n]+/).map(v=>v.trim()).filter(Boolean).map(v=>v.split('-').map(x=>x.trim()));return {dailyPoints:Number($('#work-points').value),sessions,exceptions:{...dialogContext.policyExceptions}}}
 function drawPolicyCalendar(c){
@@ -76,14 +76,14 @@ function workPolicySheet(){const p=data.workPolicy||{dailyPoints:6.4,sessions:[[
 }
 
 function teamPage(){
- const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>!p.removed&&p.title==='设计师'&&personSummary(p).free).length;
+ const active=data.tasks.filter(t=>t.state>0&&t.state<4),free=data.people.filter(p=>!p.removed&&personSummary(p).free).length;
  return heading('团队负荷','先看每个人手上的工作，再安排下一项任务。',button(icon('refresh-cw')+'同步需求','scan','',false,!connected()),'TEAM OVERVIEW')+
  '<div class="overview">'+[
  ['在手任务',active.length,'项','layers-2'],['在手贡献力',fmt(active.reduce((n,t)=>n+points(t),0)),'点','chart-no-axes-column-increasing'],['可接新任务',free,'人','users-round']
  ].map(([title,value,unit,i],index)=>'<button type="button" class="overview-item" data-command="team-metric" data-metric="'+index+'" aria-label="查看'+title+'明细"><div><div class="overview-label">'+title+'</div><div class="overview-number">'+value+'<small>'+unit+'</small></div></div><span class="overview-icon">'+icon(i)+'</span></button>').join('')+'</div>'+calendarSummary()+
- '<div class="section-heading"><h2>人员看板 <span> / '+data.people.filter(p=>!p.removed&&p.title==='设计师').length+' 人</span></h2><span>'+month().replace('-',' 年 ')+' 月 · '+fmt(data.monthlyCapacity??0)+' 点 / 人</span></div>'+
+ '<div class="section-heading"><h2>人员看板 <span> / '+data.people.filter(p=>!p.removed).length+' 人</span></h2><span>'+month().replace('-',' 年 ')+' 月 · '+fmt(data.monthlyCapacity??0)+' 点 / 人</span></div>'+
  (!data.nasStatus?.connected?'<div class="notice">连接现有 NAS 后，导入这五个文件夹中的需求。'+button('连接 NAS','settings-shortcut','',false,false)+'</div>':'')+
- '<div class="people-grid">'+data.people.filter(p=>!p.removed&&p.title==='设计师').map(personCard).join('')+'</div>';
+ '<div class="people-grid">'+data.people.filter(p=>!p.removed).map(personCard).join('')+'</div>';
 }
 function timing(t){
  if(t.state===0)return '等待负责人分配';
@@ -310,11 +310,11 @@ function renderDelivery(selection,context){
  const issues=selection.namingIssues||[],valid=!issues.length&&selection.files.length>0;context.namingDirty=false;
  $('#self-check').disabled=!valid;
  const sources=selection.files.filter(f=>f.kind==='source'),outputs=selection.files.filter(f=>f.kind==='output');
- $('#asset-summary').innerHTML='<h3>命名预览与纠正</h3><p class="description">本地文件保持原样。调整类型、日期或名称后，点击“重新预览命名”。缺少序号时按原文件名顺序编号，请核对清单。</p>'+(selection.folders||[]).map(folder=>{
+ $('#asset-summary').innerHTML='<h3>命名预览与纠正</h3><p class="description">本地文件保持原样。调整类型、日期或名称后，点击“重新预览命名”。六面图源文件按规范归档，图片保留原名，不要求面向或序号；重名会自动加后缀，请核对清单。</p>'+(selection.folders||[]).map(folder=>{
   const editable=selection.files.filter(f=>f.folderKey===folder.key&&f.kind==='output'&&['six','detail'].includes(folder.category));
   return '<section class="naming-editor" data-folder-key="'+esc(folder.key)+'"><h3>'+esc(folder.originalFolder)+'</h3><div class="naming-fields"><label class="field"><span>产物类型</span><select data-naming-category><option value="">请选择类型</option>'+(folder.skipped?'<option value="'+esc(folder.category)+'" selected>此类型已归档（可改选其他类型）</option>':'')+context.spec.categories.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===folder.category?' selected':'')+'>'+esc(c.output)+'</option>').join('')+'</select></label><label class="field"><span>交付日期（月日，例如 0924）</span><input data-naming-date value="'+esc(folder.date)+'" maxlength="4" inputmode="numeric"></label></div><p class="description">归档文件夹：'+esc(folder.folder||'选择类型后生成')+'</p>'+[...new Set((folder.namingIssues||[]).map(i=>i.message))].map(message=>'<p class="form-error">'+esc(message)+'</p>').join('')+(editable.length?'<div class="naming-faces">'+editable.map(f=>{
-   const ext=f.relativePath.match(/\.[^./]+$/)?.[0]||'',value=f.suggestedName||'';
-   return '<label><span>'+esc(f.relativePath)+'</span>'+(folder.category==='six'?'<select data-output-path="'+esc(f.relativePath)+'"><option value="">请选择实际面向</option>'+['正面','背面','左侧','右侧','顶面','底面'].map(face=>'<option value="'+esc(face+ext)+'"'+(value===face+ext?' selected':'')+'>'+face+'</option>').join('')+'</select>':'<input class="field-input" data-output-path="'+esc(f.relativePath)+'" value="'+esc(value)+'" aria-label="归档文件名">')+'</label>';
+   const value=f.suggestedName||f.relativePath.split('/').at(-1);
+   return '<label><span>'+esc(f.relativePath)+'</span><input class="field-input" data-output-path="'+esc(f.relativePath)+'" value="'+esc(value)+'" aria-label="归档文件名"></label>';
   }).join('')+'</div>':'')+'</section>';
  }).join('')+button('重新预览命名','asset-replan')+'<p id="naming-dirty" class="notice" hidden>命名设置已修改，请重新预览后上传。</p><div class="delivery-summary"><strong>'+esc(selection.folder)+'</strong><p>'+outputs.length+' 个产物 · '+sources.length+' 个源文件 · '+(selection.categoryCount||0)+' 类</p>'+(selection.skipped?.length?'<p>已归档，跳过：'+selection.skipped.map(esc).join('、')+'</p>':'')+'<p>源文件和完整工程放入「01.源文件」，图片产物放入「02.导出图片」。工程内部引用文件保持原名。</p><details open><summary>原名 → 归档目标（'+selection.files.length+' 个文件）</summary><ol class="naming-preview">'+selection.files.map(f=>'<li><span>'+(f.kind==='source'?'源文件':'产物')+'</span><span>'+esc(f.previewFrom||f.relativePath)+'</span><span class="name-arrow">→</span><span class="name-to">'+esc(f.previewTo||f.relative)+'</span></li>').join('')+'</ol></details></div>';icons();
 }
