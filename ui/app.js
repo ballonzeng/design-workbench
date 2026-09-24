@@ -487,7 +487,7 @@ document.addEventListener('click',async e=>{
   else if(command==='asset-upload'){
    const context=dialogContext,selection=context.selection;if(!selection||uploadJob?.status==='running')return;
    const selfChecked=$('#self-check').checked,job={taskId:context.taskId,title:taskName(data.tasks.find(t=>t.id===context.taskId)||{}),status:'running',phase:'准备上传',percent:0};uploadJob=job;closeSheet();drawUpload();
-   try{const result=await api('asset-upload',{selectionId:selection.selectionId,selfChecked});if(result?.pending){job.status='waiting';job.uploadId=result.uploadId;job.phase='等待负责人端自动重试';job.error=result.reason;drawUpload();toast(result.reason);return}job.status='done';job.phase='归档完成';job.percent=100;drawUpload();toast('所选产物已归档，交付地址已回填');try{accept(await api('snapshot'))}catch(e){toast('上传已完成，任务刷新失败：'+e.message,true)}}
+   try{const result=await api('asset-upload',{taskId:job.taskId,selectionId:selection.selectionId,selfChecked});if(result?.pending){job.status='waiting';job.uploadId=result.uploadId;job.phase='等待负责人端自动重试';job.error=result.reason;drawUpload();toast(result.reason);return}job.status='done';job.phase='归档完成';job.percent=100;drawUpload();toast('所选产物已归档，交付地址已回填');try{accept(await api('snapshot'))}catch(e){toast('上传已完成，任务刷新失败：'+e.message,true)}}
    catch(e){job.status='error';job.phase='请检查后重试';job.error=e.message;drawUpload();toast('上传未完成：'+e.message,true)}
 
   }

@@ -37,7 +37,7 @@ test('navigation renders before NAS response and late response cannot change the
 
 test('background upload keeps its own job when another dialog opens, and reports failures',async()=>{
  const start=source.indexOf('   const context=dialogContext,selection=context.selection;if(!selection||uploadJob?'),end=source.indexOf("\n  }\n  else if(command==='archive-reopen')",start);assert.ok(start>0);
- for(const fail of [false,true]){let finish,closed=0;const context=vm.createContext({data:{tasks:[{id:'t',title:'测试产物'}]},taskName:t=>t.title,$:()=>({checked:true}),closeSheet:()=>closed++,drawUpload:()=>{},toast:()=>{},accept:()=>{},api:command=>command==='asset-upload'?new Promise((resolve,reject)=>finish=()=>fail?reject(Error('网络断开')):resolve({})):Promise.resolve({})});
+ for(const fail of [false,true]){let finish,closed=0;const context=vm.createContext({data:{tasks:[{id:'t',title:'测试产物'}]},taskName:t=>t.title,$:()=>({checked:true}),closeSheet:()=>closed++,drawUpload:()=>{},toast:()=>{},accept:()=>{},api:(command,payload)=>{if(command==='asset-upload'){assert.equal(payload.taskId,'t');assert.equal(payload.selectionId,'s');assert.equal(payload.selfChecked,true);return new Promise((resolve,reject)=>finish=()=>fail?reject(Error('网络断开')):resolve({}))}return Promise.resolve({})}});
  vm.runInContext('let uploadJob=null,dialogContext={taskId:"t",selection:{selectionId:"s"}};async function upload(){'+source.slice(start,end)+'}',context);const pending=context.upload();assert.equal(closed,1);assert.equal(vm.runInContext('uploadJob.status',context),'running');vm.runInContext('dialogContext={taskId:"another"}',context);finish();await pending;assert.equal(closed,1);assert.equal(vm.runInContext('dialogContext.taskId',context),'another');assert.equal(vm.runInContext('uploadJob.status',context),fail?'error':'done');
  }
 });
@@ -55,4 +55,16 @@ test('completed calibration button submits the version shown when its dialog ope
  const start=source.indexOf("  else if(command==='calibration-confirm'){"),end=source.indexOf("  else if(command==='asset-scope')",start);assert.ok(start>=0&&end>start);let sent,notice;
  const context=vm.createContext({command:'calibration-confirm',t:{id:'t',version:8},dialogContext:{calibrationVersion:7,calibrationPreview:{workbookHash:'reviewed'}},closeSheet:()=>{},accept:()=>{},fmt:String,toast:text=>notice=text,api:async(command,payload)=>{if(command==='calibrate-contribution'){sent=payload;return {previousPoints:1.5,nextPoints:6}}return {}}});
  await vm.runInContext('(async()=>{'+source.slice(start,end).replace('else if','if')+'})()',context);assert.equal(sent.taskId,'t');assert.equal(sent.version,7);assert.equal(sent.expectedHash,'reviewed');assert.match(notice,/1.5 → 6/);
+});
+
+test('renderer upload reaches desktop batch handler and rejects a different task',async()=>{
+ const desktop=fs.readFileSync(path.join(__dirname,'../desktop/main.cjs'),'utf8').replace(/\r\n/g,'\n');
+ let uploaded=0;const chosen=new Map([['s',{taskId:'t',batch:[{taskId:'t',folder:'六面图',spec:{categoryName:'六面图'}}]}]]);
+ const main=vm.createContext({chosen,crypto:{randomUUID:()=> 'child'},uploadOne:async payload=>{assert.equal(payload.taskId,'t');uploaded++;return {}}});
+ vm.runInContext('let uploadBatchActive=false,uploading=false,uploadBatchProgress=null;'+desktop.slice(desktop.indexOf('async function upload(payload)'),desktop.indexOf('async function uploadOne(payload)')),main);
+ await assert.rejects(main.upload({selectionId:'s',taskId:'other',selfChecked:true}),/任务选择/);assert.equal(uploaded,0);
+ const context=vm.createContext({data:{tasks:[{id:'t',title:'六面图'}]},taskName:t=>t.title,$:()=>({checked:true}),closeSheet:()=>{},drawUpload:()=>{},toast:()=>{},accept:()=>{},api:(command,payload)=>command==='asset-upload'?main.upload(payload):Promise.resolve({})});
+ const start=source.indexOf('   const context=dialogContext,selection=context.selection;if(!selection||uploadJob?'),end=source.indexOf("\n  }\n  else if(command==='archive-reopen')",start);
+ vm.runInContext('let uploadJob=null,dialogContext={taskId:"t",selection:{selectionId:"s"}};async function upload(){'+source.slice(start,end)+'}',context);
+ await context.upload();assert.equal(uploaded,1);assert.equal(vm.runInContext('uploadJob.status',context),'done');
 });
