@@ -37,8 +37,9 @@ function itemDetail(item){
  const rate=R.RATES.find(rate=>rate.id===item.type)||R.RATES.find(rate=>R.normalize(rate.name)===R.normalize(item.typeName||item.type));
  const typeName=item.typeName||rate?.name||item.type||'';
  const unit=typeof item.unit==='string'&&item.unit.trim()?item.unit.trim():rate?.unit||'';
- const quantity=item.qty===undefined||item.qty===null?'':String(item.qty);
- return [typeName,quantity+unit].filter(Boolean).join(' ')+(item.note?'（'+item.note+'）':'');
+ const parsedQuantity=typeof item.qty==='number'?item.qty:typeof item.qty==='string'&&item.qty.trim()?Number(item.qty):NaN;
+ const quantity=Number.isFinite(parsedQuantity)&&parsedQuantity>=0?parsedQuantity:'';
+ return [text(typeName+(item.note?'（'+item.note+'）':'')),quantity===''?'':unit&&unit!=='张'?text(quantity+unit):quantity];
 }
 
 function createPersonalReport(tasks,{personId,personName,frequency,anchor,startDate,endDate,generatedAt=Date.now()}={}){
@@ -48,11 +49,13 @@ function createPersonalReport(tasks,{personId,personName,frequency,anchor,startD
  const name=personName||R.PEOPLE.find(person=>person.id===personId)?.name||personId;
  const selected=tasks.filter(task=>task.owner===personId&&task.state===4&&inRange(task.completedAt,effectiveRange)&&!task.completionFromFolder&&!/estimate/i.test(task.completionTimeSource||''));
  selected.sort((a,b)=>a.completedAt-b.completedAt||String(a.id).localeCompare(String(b.id)));
- const rows=[['日期','69码','对接运营','设计者','任务名','事项明细']];
+ const rows=[['日期','69码','对接运营','设计者','任务名','事项','张数']];
  let items=0;
  for(const task of selected){
   const taskItems=Array.isArray(task.items)?task.items:[];items+=taskItems.length;
-  rows.push([dateOnlyCell(task.completedAt),textCell(task.code),text(task.operator),text(name),text(task.title||task.product||task.filename||task.id),text(taskItems.map(itemDetail).join('；'))]);
+  const taskColumns=[dateOnlyCell(task.completedAt),textCell(task.code),text(task.operator),text(name),text(task.title||task.product||task.filename||task.id)];
+  if(!taskItems.length)rows.push([...taskColumns,'','']);
+  else for(const item of taskItems)rows.push([...taskColumns,...itemDetail(item)]);
  }
  const sheets=[{name:'任务明细',rows}],counts={tasks:selected.length,items};
  return {bytes:workbook(sheets,generatedAt),range,counts,sheets};

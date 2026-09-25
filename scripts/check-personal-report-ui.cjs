@@ -19,7 +19,8 @@ app.whenReady().then(async()=>{
    if(command==='export-personal-report'){
     const source=await service.call(actor(),'personal-report-data',payload);
     const report=createPersonalReport(source.tasks,{...payload,...source});
-    assert.equal(report.sheets.length,1);assert.deepEqual(report.sheets[0].rows[0],['日期','69码','对接运营','设计者','任务名','事项明细']);
+    assert.equal(report.sheets.length,1);assert.deepEqual(report.sheets[0].rows[0],['日期','69码','对接运营','设计者','任务名','事项','张数']);
+    assert.equal(report.sheets[0].rows.length,4);assert.equal(report.sheets[0].rows[1][5],'完整SKU精做');assert.equal(report.sheets[0].rows[1][6],4);
     exportResults.push({payload,counts:report.counts});
     if(cancelSave)return {ok:true,value:null};
     const file=path.join(out,'个人任务明细-测试数据.xlsx');fs.writeFileSync(file,report.bytes);

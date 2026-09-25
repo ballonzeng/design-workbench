@@ -152,7 +152,7 @@ function productsPage(){
 function personalReportsPage(){
  const ready=!!data.connection?.online&&!!data.personalReportVersion;
  const message=!data.connection?.online?'连接负责人端后即可导出。':!data.personalReportVersion?'请先更新负责人主机，才能导出个人任务明细。':'导出当前登录人 '+esc(data.person?.name||'')+' 的任务记录。';
- return heading('我的任务明细','日期、69码、对接运营、设计者、任务名、事项明细。','','MY WORK EXPORT')+
+ return heading('我的任务明细','日期、69码、对接运营、设计者、任务名、事项、张数。','','MY WORK EXPORT')+
  '<p class="notice">'+message+'</p>'+
  '<div class="report-grid">'+[['week','周任务明细','选择周一至周日的个人任务。','calendar-days'],['month','月任务明细','选择一个自然月的个人任务。','calendar-range']].map(([frequency,title,copy,i])=>'<article class="report-card"><span class="report-icon '+frequency+'">'+icon(i)+'</span><h2>'+title+'</h2><p>'+copy+'</p>'+button('选择日期并导出','personal-report-open','data-frequency="'+frequency+'"',true,!ready)+'</article>').join('')+'</div>'+
  '<div class="report-note">'+icon('calendar')+'<div><strong>自选日期</strong><p>选择开始日和结束日。</p></div>'+button('自选日期','personal-report-open','data-frequency="custom"',false,!ready)+'</div>';
