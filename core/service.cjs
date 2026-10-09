@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path');const https=require('node:https');const crypto=require('node:crypto');const {EventEmitter}=require('node:events');
 const selfsigned=require('selfsigned');const {Store,digest}=require('./store.cjs');const {Nas,exists,guarded}=require('./nas.cjs');const {Assets,archiveSpec}=require('./assets.cjs');const {parseRequirement,patchWorkbook,workflowFields,workbookTaskId,identifyWorkbook}=require('./workbook.cjs');
-const {RequirementsSync,reconcileTask,itemsIdentity}=require('./requirements-sync.cjs');
+const {RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState}=require('./requirements-sync.cjs');
 const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
@@ -99,7 +99,9 @@ class Service extends EventEmitter{
   if(parsed.workbookTaskId)parsed.id=parsed.workbookTaskId;
   for(const item of parsed.items)item.category=null;
   if(this.store.all('task').some(t=>t.originalHash===parsed.sourceHash||t.filename===filename))R.fail('此需求已经导入，未重复创建',409);
-  await this.nas.ready();const now=Date.now();let owner=state>0?R.PEOPLE.find(p=>p.name===parsed.requestedDesigner)?.id:null;
+  await this.nas.ready();const sourceState=state;
+  if(existing)state=assignedInboxState(parsed,workflowFields(bytes),{state});
+  const now=Date.now();let owner=state>0?R.PEOPLE.find(p=>p.name===parsed.requestedDesigner)?.id:null;
   if(state>0&&!owner)R.fail('已分配目录内的需求表需要填写设计师');
   const task={...parsed,originalHash:parsed.sourceHash,workbookHash:parsed.sourceHash,state,owner,version:1,createdAt:now,updatedAt:now,elapsedMs:0,runningSince:null,startedAt:null,sealed:false,assignedAt:owner?now:null,assignmentId:owner?crypto.randomUUID():null,receivedAt:null,readAt:null};
   // Imported running work is paused until its designer explicitly resumes;
@@ -115,7 +117,7 @@ class Service extends EventEmitter{
   }
   task.workbookTaskId=task.id;
   const dest=await guarded(this.nas.config.taskRoot,R.STAGES[state],filename);
-  if(existing)return this.nas.sync({...task,workbookHash:parsed.sourceHash},task,{}, {kind:'imported-existing',actor:'zeng',body:{filename}});
+  if(existing)return this.nas.sync({...task,state:sourceState,workbookHash:parsed.sourceHash},task,{}, {kind:'imported-existing',actor:'zeng',body:{filename}});
   if(!existing){bytes=identifyWorkbook(patchWorkbook(bytes,{E4:'',F4:'',H4:'',I4:'',J4:'',K4:'',L4:'',M4:'',N4:''}),task.id);task.workbookHash=digest(bytes);await fsp.writeFile(dest,bytes,{flag:'wx'});if(await require('./nas.cjs').fileHash(dest)!==task.workbookHash)R.fail('需求表写入校验失败')}
   task.workflowFields=workflowFields(bytes);
   this.store.atomic(()=>{this.store.put('task',task.id,task);this.store.event(existing?'imported-existing':'requirement-created','zeng',task.id,{filename})});return task;
@@ -183,7 +185,10 @@ class Service extends EventEmitter{
      if(missing.length>1)R.fail('找到多个可能的原任务，无法安全关联改名后的需求表，请负责人核对重复任务');
      if(missing.length===1){
       const old=missing[0],categories=Object.fromEntries(old.items.map(item=>[item.row,item.category])),extras=Object.fromEntries(old.items.map(item=>[item.row,item.extra||0])),parsed=parseRequirement(bytes,f.name,{categories,extras}),fields=workflowFields(bytes),next=reconcileTask(old,parsed,fields,{state,stage:R.STAGES[state],filename:f.name},Date.now(),this.store.all('upload'));
-      this.store.atomic(()=>{this.store.put('task',old.id,next);cancelStaleUploads(this.store,next);this.store.event('requirement-renamed','nas',old.id,{from:old.filename,to:f.name,fromState:old.state,toState:next.state})});known.add(f.name);relinked++;
+      const event={kind:'requirement-renamed',actor:'nas',body:{from:old.filename,to:f.name,fromState:old.state,toState:next.state}};
+      if(next.state!==state)await this.nas.sync({...old,state,filename:f.name,workbookHash:initial.sourceHash},next,{},event);
+      else this.store.atomic(()=>{this.store.put('task',old.id,next);cancelStaleUploads(this.store,next);this.store.event(event.kind,event.actor,old.id,event.body)});
+      known.add(f.name);relinked++;
      }else{await this.importFile(bytes,f.name,{observedAt:stat.mtimeMs},state,true);known.add(f.name);count++}
     }catch(e){issues.push({filename:f.name,stage:R.STAGES[state],error:e.reasons?.join('；')||e.message,details:e.reasons||[]})}
    }

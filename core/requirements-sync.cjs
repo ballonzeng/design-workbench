@@ -4,10 +4,16 @@ const R=require('./rules.cjs'),{parseRequirement,workflowFields,workbookTaskId}=
 const {archiveIdentity,hasCurrentAssets,hasPublishingUpload,resetArchive,cancelStaleUploads}=require('./archive-state.cjs');
 const {digest}=require('./store.cjs'),{guarded,exists}=require('./nas.cjs');
 // Delivery category is chosen later from the designer's finished folder name.
-const identity=t=>JSON.stringify([t.requestedAt,t.code,t.product]);
+const identity=t=>JSON.stringify([t.requestedAt,t.brand,t.workbookBrand,t.code,t.product]);
 const itemIdentity=item=>[item.row,item.type,item.qty,item.extra||0,item.brand,item.workbookBrand,item.product,item.code,item.linkId||'',item.note||'',item.category||null];
 const itemsIdentity=items=>JSON.stringify(items.map(itemIdentity));
 const fileKey=name=>name.toLowerCase().replace(/-[^-]+\.xlsx$/,'');
+function assignedInboxState(parsed,fields,location,old=null,uploads=[]){
+ if(location.state!==0||parsed.requestedDesigner==='未分配'||!R.PEOPLE.some(p=>p.name===parsed.requestedDesigner)||!parsed.templateTimes.assignedAt)return location.state;
+ if(['H4','I4','J4','K4','M4','N4'].some(k=>fields[k]!==''))return location.state;
+ if(old&&(old.state>1||old.blocked||old.runningSince||old.startedAt||old.reviewAt||old.completedAt||old.elapsedMs>0||old.workIntervals?.length||old.deliveryHistory?.length||hasCurrentAssets(old)||uploads.some(u=>u.taskId===old.id&&['uploading','publishing'].includes(u.status))))return location.state;
+ return 1;
+}
 function baselineFor(task){
  if(task.workflowFields)return task.workflowFields;
  const pair=time=>time?R.dayValues(time).map(String):['',''];
@@ -17,7 +23,7 @@ function baselineFor(task){
 function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  if(parsed.workbookTaskId&&parsed.workbookTaskId!==old.id)R.fail('需求表内部编号与当前任务不同，请负责人核对，未替换原任务');
  const archived=hasCurrentAssets(old),publishing=hasPublishingUpload(old,uploads);
- const dateCorrection=parsed.workbookTaskId===old.id&&old.code===parsed.code&&old.product===parsed.product&&!archived;
+ const dateCorrection=parsed.workbookTaskId===old.id&&old.brand===parsed.brand&&old.workbookBrand===parsed.workbookBrand&&old.code===parsed.code&&old.product===parsed.product&&!archived;
  if(identity(old)!==identity(parsed)&&!dateCorrection)R.fail('需求的产品、69码或需求时间已变化，请负责人核对；未自动替换已导入任务');
  const itemsChanged=itemsIdentity(old.items)!==itemsIdentity(parsed.items);
  if(itemsChanged&&old.state===4)R.fail('已完结任务的事项已修改，请负责人保存并关闭 Excel 后，在任务详情中点击“校准点数”');
@@ -25,7 +31,7 @@ function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  const baseline=baselineFor(old),changed=keys=>keys.some(k=>fields[k]!==baseline[k]);
  const folderChanged=location.state!==old.state;
  const times=parsed.templateTimes;
- let state=location.state;
+ let state=assignedInboxState(parsed,fields,location,old,uploads);
  if(!folderChanged){
   if(changed(['H4','I4','J4','K4','M4','N4'])){
    const time=keys=>keys.every(k=>fields[k]!==''),partial=keys=>keys.some(k=>fields[k]!=='')&&!time(keys);
@@ -172,4 +178,4 @@ class RequirementsSync{
   return {checked:!this.status.error,codeCorrection,taskIssues:this.store.all('task').filter(t=>(targetId?t.id===targetId:includeCompleted||t.state!==4)&&t.workbookSyncIssue).length,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }
-module.exports={RequirementsSync,reconcileTask,itemsIdentity};
+module.exports={RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState};

@@ -397,3 +397,69 @@ test('calibration ignores retired upload rounds but still blocks active uploads 
  assert.equal(f.service.store.get('contributionCalibration',require('../core/store.cjs').calibrationKey(f.current())).archiveRound,2);
  assert.equal(f.service.store.get('upload','old-uploading').status,'uploading');assert.equal(f.service.store.get('upload','cancelled').status,'cancelled');
 });
+
+async function inboxReplacement(f,{name=filename,withoutId=false,patch={},changeItems=false}={}){
+ const source=f.file(),wb=unpack(patchWorkbook(await fs.readFile(source),patch));
+ if(withoutId)wb.entries['xl/workbook.xml']=strToU8(require('fflate').strFromU8(wb.entries['xl/workbook.xml']).replace(/<definedName\b[^>]*name="_DW_TASK_ID"[^>]*>[\s\S]*?<\/definedName>/,''));
+ if(changeItems)wb.entries[wb.status.file]=strToU8(wb.status.content.replace('单图任务（复杂元素替换）','创意图').replace(/(<c\b[^>]*r="G6"[^>]*>\s*<v>)1(<\/v>)/,'$13$2'));
+ const bytes=Buffer.from(zipSync(wb.entries)),target=path.join(f.taskRoot,STAGES[0],name);
+ await fs.writeFile(target,bytes);if(source!==target)await fs.unlink(source);
+ return {target,bytes};
+}
+
+for(const withoutId of [false,true])test('an assigned inbox replacement '+(withoutId?'without a task ID':'with the original task ID')+' preserves the task and receipts while updating requirement points',async t=>{
+ const f=await setup(t);await f.client.rpc('read',{taskId:f.task.id,assignmentId:f.current().assignmentId});await f.service.requirementsSync.stop();f.service.requirementsSync.stopped=false;
+ const before=f.current(),replacement=await inboxReplacement(f,{withoutId,changeItems:true});
+ await f.service.requirementsSync.run(true,true);const next=f.current(),dest=path.join(f.taskRoot,STAGES[1],filename);
+ assert.equal(f.service.store.all('task').length,1);assert.equal(next.id,before.id);assert.equal(next.state,1);assert.equal(next.owner,before.owner);assert.equal(next.assignmentId,before.assignmentId);
+ assert.equal(next.receivedAt,before.receivedAt);assert.equal(next.readAt,before.readAt);assert.equal(next.assignedAt,before.assignedAt);assert.equal(next.items[0].type,'creative');assert.equal(next.items[0].qty,3);assert.equal(next.items[0].points,6);
+ assert.equal(next.workbookSyncIssue,null);assert.equal(f.file(),dest);await assert.rejects(fs.access(replacement.target));assert.equal(require('../core/workbook.cjs').workbookTaskId(await fs.readFile(dest)),before.id);
+ assert.deepEqual(unpack(await fs.readFile(dest)).entries['xl/worksheets/sheet2.xml'],unpack(replacement.bytes).entries['xl/worksheets/sheet2.xml']);
+ const version=next.version;await f.service.requirementsSync.run(true,true);assert.equal(f.current().version,version);assert.equal(f.service.store.all('task').length,1);
+});
+
+test('a renamed replacement with the same task ID leaves inbox and keeps assignment history',async t=>{
+ const f=await setup(t);await f.service.requirementsSync.stop();f.service.requirementsSync.stopped=false;const before=f.current(),name='26090311-九芝堂-西红花改图-王燕-洪华.xlsx';
+ const replacement=await inboxReplacement(f,{name,changeItems:true});const result=await f.service.requirementsSync.run(true,true),next=f.current();
+ assert.equal(result.relinked,1);assert.equal(f.service.store.all('task').length,1);assert.equal(next.id,before.id);assert.equal(next.filename,name);assert.equal(next.state,1);assert.equal(next.assignmentId,before.assignmentId);assert.equal(next.items[0].points,6);assert.equal(next.workbookSyncIssue,null);
+ assert.equal(f.file(),path.join(f.taskRoot,STAGES[1],name));await assert.rejects(fs.access(replacement.target));assert.ok(f.service.store.events(next.id).some(e=>e.kind==='requirement-renamed'));
+});
+
+test('a new assigned workbook in inbox imports directly into pending design without creating a second task on refresh',async t=>{
+ const f=await setup(t);await f.service.requirementsSync.stop();f.service.requirementsSync.stopped=false;const wb=unpack(workbook()),name='26090311-九芝堂-灵芝孢子粉-王燕-洪华.xlsx';
+ wb.entries[wb.status.file]=strToU8(wb.status.content.replace('西红花','灵芝孢子粉').replace('6970855224163','6970855224999'));const source=path.join(f.taskRoot,STAGES[0],name);await fs.writeFile(source,zipSync(wb.entries));
+ const result=await f.service.requirementsSync.run(true,true),task=f.service.store.all('task').find(task=>task.filename===name);assert.equal(result.imported,1);assert.ok(task);assert.equal(task.state,1);assert.equal(task.owner,'hong');assert.ok(task.assignmentId);assert.equal(task.startedAt,null);assert.equal(task.workbookSyncIssue,null);
+ await assert.rejects(fs.access(source));const dest=path.join(f.taskRoot,STAGES[1],name);assert.equal(require('../core/workbook.cjs').workbookTaskId(await fs.readFile(dest)),task.id);await f.service.requirementsSync.run(true,true);assert.equal(f.service.store.all('task').length,2);
+});
+
+test('inbox normalization never resets started, previously timed, archived or uploading tasks or new workflow milestones',async t=>{
+ const cases=[
+  {label:'started',task:{state:2,startedAt:Date.now()-60000,runningSince:Date.now()-1000}},
+  {label:'returned with elapsed time',task:{elapsedMs:60000}},
+  {label:'returned with work intervals',task:{workIntervals:[{start:1,end:2,owner:'hong'}]}},
+  {label:'delivery history',task:{deliveryHistory:[{at:1,items:[],deliveries:[]}]}},
+  {label:'current assets',task:{deliveries:[{id:'kept-delivery',category:'main'}]}},
+  {label:'uploading',upload:{status:'uploading'}},
+  {label:'publishing',upload:{status:'publishing'}},
+  {label:'new start milestone',patch:{H4:46268,I4:12}},
+  {label:'partial start milestone',patch:{H4:46268,I4:''}},
+  {label:'new review milestone',patch:{J4:46268,K4:13}},
+  {label:'new confirmation milestone',patch:{M4:46268,N4:14}},
+  {label:'missing assignment date',patch:{E4:'',F4:''}}
+ ];
+ for(const scenario of cases)await t.test(scenario.label,async st=>{
+  const f=await setup(st);await f.service.requirementsSync.stop();f.service.requirementsSync.stopped=false;if(scenario.task){const original=f.file();f.service.store.put('task',f.task.id,{...f.current(),...scenario.task});if(original!==f.file())await fs.rename(original,f.file())}
+  if(scenario.upload)f.service.store.put('upload','replacement-upload',{id:'replacement-upload',taskId:f.task.id,archiveRound:0,actor:'hong',...scenario.upload});
+  const before=f.current(),replacement=await inboxReplacement(f,{patch:scenario.patch});await f.service.requirementsSync.run(true,true);const next=f.current();
+  assert.equal(next.id,before.id);assert.equal(next.state,before.state);assert.equal(next.assignmentId,before.assignmentId);assert.equal(next.workbookHash,before.workbookHash);assert.equal(next.elapsedMs,before.elapsedMs);assert.equal(next.startedAt,before.startedAt);assert.equal(next.runningSince,before.runningSince);assert.deepEqual(next.workIntervals,before.workIntervals);assert.deepEqual(next.deliveries,before.deliveries);assert.deepEqual(next.deliveryHistory,before.deliveryHistory);
+  assert.match(next.workbookSyncIssue.message,/待分配需求|封存资产|归档/);assert.deepEqual(await fs.readFile(replacement.target),replacement.bytes);if(scenario.upload)assert.equal(f.service.store.get('upload','replacement-upload').status,scenario.upload.status);
+ });
+});
+
+test('an assigned inbox replacement waits for Excel close and rejects duplicate originals and foreign task IDs',async t=>{
+ const f=await setup(t);await f.service.requirementsSync.stop();f.service.requirementsSync.stopped=false;const before=f.current(),replacement=await inboxReplacement(f,{changeItems:true}),lock=path.join(path.dirname(replacement.target),'~$'+filename);
+ await fs.writeFile(lock,'Excel lock');await f.service.requirementsSync.run(true,true);assert.match(f.current().workbookSyncIssue.message,/保存并关闭/);assert.equal(f.current().workbookHash,before.workbookHash);assert.ok(await fs.stat(replacement.target));await fs.unlink(lock);
+ const duplicate=path.join(f.taskRoot,STAGES[1],filename);await fs.copyFile(replacement.target,duplicate);await f.service.requirementsSync.run(true,true);assert.match(f.current().workbookSyncIssue.message,/多个状态文件夹/);assert.equal(f.current().items[0].points,before.items[0].points);await fs.unlink(duplicate);
+ const wb=unpack(await fs.readFile(replacement.target)),foreign=require('node:crypto').randomUUID();wb.entries['xl/workbook.xml']=strToU8(require('fflate').strFromU8(wb.entries['xl/workbook.xml']).replace(before.id,foreign));await fs.writeFile(replacement.target,zipSync(wb.entries));await f.service.requirementsSync.run(true,true);assert.match(f.current().workbookSyncIssue.message,/内部编号属于另一任务/);assert.equal(f.current().id,before.id);assert.equal(f.current().workbookHash,before.workbookHash);
+ await fs.writeFile(replacement.target,replacement.bytes);await f.service.requirementsSync.run(true,true);assert.equal(f.current().state,1);assert.equal(f.current().items[0].points,6);assert.equal(f.current().workbookSyncIssue,null);assert.equal(f.service.store.all('task').length,1);
+});
