@@ -6,6 +6,7 @@ const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
 const W=require('./work-calendar.cjs');
+const {hasWorkbookLock}=require('./workbook-lock.cjs');
 const requestIdentity=task=>JSON.stringify([task.requestedAt,task.code,R.normalize(task.product)]);
 class Service extends EventEmitter{
  constructor(dir,{identity=null,saveIdentity=null,host='0.0.0.0',port=47831}={}){
@@ -125,7 +126,7 @@ class Service extends EventEmitter{
  async inspectDuplicate(actor,taskId){
   R.manager(actor);await this.nas.ready();const duplicate=this.store.get('task',taskId);if(!duplicate)R.fail('任务不存在');
   const locations=[];for(const stage of R.STAGES)for(const filename of await fsp.readdir(path.join(this.nas.config.taskRoot,stage)))if(filename===duplicate.filename)locations.push(path.join(this.nas.config.taskRoot,stage,filename));
-  if(locations.length!==1)R.fail('必须先保留唯一的 NAS 原需求表');const file=locations[0];if(await exists(path.join(path.dirname(file),'~$'+path.basename(file))))R.fail('请保存并关闭 Excel 后再修复');
+  if(locations.length!==1)R.fail('必须先保留唯一的 NAS 原需求表');const file=locations[0];if(await hasWorkbookLock(file,this.nas.config.taskRoot))R.fail('请保存并关闭 Excel 后再修复');
   const bytes=await fsp.readFile(file),id=workbookTaskId(bytes),keep=this.store.get('task',id);
   if(!keep||id===taskId)R.fail('这条记录与原表匹配，不能作为重复项移除；请从异常卡片进入');
   const signature=t=>JSON.stringify(t.items.map(i=>[i.row,i.type,i.qty,i.extra||0,i.points]));
@@ -174,7 +175,7 @@ class Service extends EventEmitter{
     if(!f.name.toLowerCase().endsWith('.xlsx')||known.has(f.name))continue;
     try{
      const file=await guarded(this.nas.config.taskRoot,R.STAGES[state],f.name),stat=await fsp.stat(file);if(stat.size>50*1024*1024)R.fail('需求表超过 50 MB');const bytes=await fsp.readFile(file),initial=parseRequirement(bytes,f.name);
-     if(await exists(path.join(dir,'~$'+f.name)))R.fail('Excel 正在编辑原表，请保存并关闭后自动重试');
+     if(await hasWorkbookLock(file,this.nas.config.taskRoot))R.fail('检测到 Excel 占用记录，请保存并关闭后自动重试');
      const after=await fsp.stat(file);if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs)R.fail('需求表正在保存，稍后自动重试');
      const missing=[];
      if(initial.workbookTaskId){const linked=this.store.get('task',initial.workbookTaskId);if(linked){if(await exists(this.nas.taskPath(linked)))R.fail('多个文件使用同一个任务编号，请保留唯一原需求；复制提新需求请使用空白模板');missing.push(linked)}}

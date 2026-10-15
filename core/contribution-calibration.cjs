@@ -1,8 +1,9 @@
 'use strict';
-const fs=require('node:fs/promises'),path=require('node:path');
+const fs=require('node:fs/promises');
 const R=require('./rules.cjs'),{parseRequirement,workflowFields}=require('./workbook.cjs');
-const {guarded,exists}=require('./nas.cjs'),{digest,calibrationKey}=require('./store.cjs');
+const {guarded}=require('./nas.cjs'),{digest,calibrationKey}=require('./store.cjs');
 const {currentUpload}=require('./archive-state.cjs');
+const {hasWorkbookLock}=require('./workbook-lock.cjs');
 
 // Called inside the service mutation queue. Excel is the input, never an output.
 async function calibrateContribution(service,actor,payload){
@@ -16,8 +17,8 @@ async function calibrateContribution(service,actor,payload){
  const key=name=>name.toLowerCase().replace(/-[^-]+\.xlsx$/,'');let copies=0;
  for(const stage of R.STAGES)for(const entry of await fs.readdir(await guarded(nas.config.taskRoot,stage),{withFileTypes:true}))if(entry.isFile()&&/\.xlsx$/i.test(entry.name)&&!entry.name.startsWith('~$')&&key(entry.name)===key(old.filename))copies++;
  if(copies!==1)R.fail('五个状态文件夹内必须保留唯一原需求表，请核对重复文件或文件位置',409);
- const file=await guarded(nas.config.taskRoot,R.STAGES[4],old.filename),lock=path.join(path.dirname(file),'~$'+path.basename(file));
- if(await exists(lock))R.fail('请保存并关闭 Excel 后再校准点数',409);
+ const file=await guarded(nas.config.taskRoot,R.STAGES[4],old.filename);
+ if(await hasWorkbookLock(file,nas.config.taskRoot))R.fail('请保存并关闭 Excel 后再校准点数',409);
  const before=await fs.stat(file);if(before.size>50*1024*1024)R.fail('需求表超过 50 MB，暂未校准');
  const bytes=await fs.readFile(file),hash=digest(bytes);
  if(payload.expectedHash!==undefined&&payload.expectedHash!==hash)R.fail('需求表与预览时不同，请重新读取变更后再确认校准',409);
@@ -39,7 +40,7 @@ async function calibrateContribution(service,actor,payload){
  next.contributionCalibration={at,actor:actor.personId,completedAt:old.completedAt,owner:old.owner,code:old.code,archiveRound:old.archiveRound||0,items,previousPoints,nextPoints};
  next.workbookHash=hash;next.workbookSyncIssue=null;next.updatedAt=at;next.version++;
  const after=await fs.stat(file);
- if(before.size!==after.size||before.mtimeMs!==after.mtimeMs||await exists(lock)||digest(await fs.readFile(file))!==hash)R.fail('需求表刚刚发生变化，请关闭 Excel 后重新校准',409);
+ if(before.size!==after.size||before.mtimeMs!==after.mtimeMs||await hasWorkbookLock(file,nas.config.taskRoot,{recover:false})||digest(await fs.readFile(file))!==hash)R.fail('需求表刚刚发生变化，请关闭 Excel 后重新校准',409);
  if(payload.preview===true){
   const summary=({row,type,typeName,qty,extra=0,note='',linkId='',category})=>({row,type,typeName,qty,extra,note,linkId,category,points:R.itemPoints({type,qty,extra})});
   const previousItems=old.items.map(summary),nextItems=next.items.map(summary),rows=[...new Set([...previousItems,...nextItems].map(i=>i.row))].sort((a,b)=>a-b);

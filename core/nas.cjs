@@ -3,6 +3,7 @@ const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path'
 const {fail,STAGES,safeName,CATEGORIES,parts}=require('./rules.cjs');
 const {digest}=require('./store.cjs');const {patchWorkbook,workflowFields,identifyWorkbook}=require('./workbook.cjs');
 const {cancelStaleUploads}=require('./archive-state.cjs');
+const {hasWorkbookLock}=require('./workbook-lock.cjs');
 async function exists(file){try{await fsp.lstat(file);return true}catch(e){if(e.code==='ENOENT')return false;throw e}}
 const REMOTE_LEASE_STALE_MS=120000,LOCAL_LEASE_STALE_MS=15000;
 function processAlive(pid){
@@ -99,7 +100,7 @@ class Nas{
  taskPath(task){return path.join(this.config.taskRoot,STAGES[task.state],task.filename)}
  async readTask(task){
   await this.ready();const file=await guarded(this.config.taskRoot,STAGES[task.state],task.filename);
-  if(await exists(path.join(path.dirname(file),'~$'+path.basename(file))))fail('需求表正在被 Excel 占用，请关闭后重试');
+  if(await hasWorkbookLock(file,this.config.taskRoot))fail('检测到 Excel 占用记录，请保存并关闭后重试');
   const bytes=await fsp.readFile(file);if(digest(bytes)!==task.workbookHash)fail('NAS 原需求表已修改，请保存并关闭 Excel，点击刷新同步后再操作；未覆盖原文件',409);
   return bytes;
  }

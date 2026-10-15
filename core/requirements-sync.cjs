@@ -3,6 +3,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('n
 const R=require('./rules.cjs'),{parseRequirement,workflowFields,workbookTaskId}=require('./workbook.cjs');
 const {archiveIdentity,hasCurrentAssets,hasPublishingUpload,resetArchive,cancelStaleUploads}=require('./archive-state.cjs');
 const {digest}=require('./store.cjs'),{guarded,exists}=require('./nas.cjs');
+const {hasWorkbookLock}=require('./workbook-lock.cjs');
 // Delivery category is chosen later from the designer's finished folder name.
 const identity=t=>JSON.stringify([t.requestedAt,t.brand,t.workbookBrand,t.code,t.product]);
 const itemIdentity=item=>[item.row,item.type,item.qty,item.extra||0,item.brand,item.workbookBrand,item.product,item.code,item.linkId||'',item.note||'',item.category||null];
@@ -121,8 +122,8 @@ class RequirementsSync{
      const file=await guarded(this.nas.config.taskRoot,location.stage,location.filename),stat=await fs.stat(file);
      const signature=location.stage+'/'+location.filename+':'+stat.size+':'+stat.mtimeMs;
      if(!force&&this.seen.get(task.id)?.signature===signature&&this.seen.get(task.id)?.hash===task.workbookHash&&!task.workbookSyncIssue)continue;
-     if(await exists(path.join(path.dirname(file),'~$'+path.basename(file)))){
-      changed+=Number(this.issue(task,'Excel 正在编辑原表；请保存并关闭，随后自动同步流转',location));continue;
+     if(await hasWorkbookLock(file,this.nas.config.taskRoot)){
+      changed+=Number(this.issue(task,'检测到 Excel 占用记录；请保存并关闭，随后自动检查恢复并同步流转',location));continue;
      }
      if(stat.size>50*1024*1024)R.fail('需求表超过 50 MB，暂未同步');
      const bytes=await fs.readFile(file),after=await fs.stat(file);if(stat.size!==after.size||stat.mtimeMs!==after.mtimeMs)continue;
@@ -152,7 +153,7 @@ class RequirementsSync{
         // Use the saved external file as the journal's guarded source; do not overwrite external edits.
         await this.nas.sync({...current,state:location.state,filename:location.filename,workbookHash:hash},next,{},event);
        }else{
-        const latest=await fs.stat(file);if(latest.size!==after.size||latest.mtimeMs!==after.mtimeMs||await exists(path.join(path.dirname(file),'~$'+path.basename(file))))return;
+        const latest=await fs.stat(file);if(latest.size!==after.size||latest.mtimeMs!==after.mtimeMs||await hasWorkbookLock(file,this.nas.config.taskRoot,{recover:false}))return;
         this.store.atomic(()=>{this.store.put('task',task.id,next);cancelStaleUploads(this.store,next);this.store.event(event.kind,event.actor,task.id,event.body)});
        }
        changed++;
