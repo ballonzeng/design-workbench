@@ -115,7 +115,7 @@ function parseRequirement(bytes,filename,{categories={},extras={}}={}){
  const filenameParts=parseRequirementFilename(filename,{requestedAt,operator,workbookDesigner});safeName(filename,'文件名');const designer=filenameParts.assignment;
  const codeColumn=Array.from({length:26},(_,i)=>String.fromCharCode(65+i)).find(column=>/^(产品)?69(条)?码$/.test(normalize(v(column+'5'))));
  if(!codeColumn)fail('Excel 中未找到“69码”板块');
- const populated=wb.sheets.filter(x=>!['【状态】','状态','参数选项','Sheet1'].includes(x.name)&&Object.values(x.cells).some(c=>c.value!=='')).map(x=>x.name==='创图'?'创意图':x.name==='视频'?'创意视频':x.name);
+ const populated=wb.sheets.filter(x=>!['【状态】','状态','参数选项','Sheet1'].includes(x.name)&&Object.values(x.cells).some(c=>c.value!=='')).map(x=>({'创图':'创意图','视频':'创意视频','包装':'包装设计'})[x.name]||x.name);
  const items=[];
  for(let row=6;row<=200;row++){
   const type=cellText(v('F'+row));if(!type)continue;

@@ -310,8 +310,8 @@ function renderDelivery(selection,context){
  const issues=selection.namingIssues||[],valid=!issues.length&&selection.files.length>0;context.namingDirty=false;
  $('#self-check').disabled=!valid;
  const sources=selection.files.filter(f=>f.kind==='source'),outputs=selection.files.filter(f=>f.kind==='output');
- $('#asset-summary').innerHTML='<h3>命名预览与纠正</h3><p class="description">本地文件保持原样。调整类型、日期或名称后，点击“重新预览命名”。六面图源文件按规范归档，图片保留原名，不要求面向或序号；重名会自动加后缀，请核对清单。</p>'+(selection.folders||[]).map(folder=>{
-  const editable=selection.files.filter(f=>f.folderKey===folder.key&&f.kind==='output'&&['six','detail'].includes(folder.category));
+ $('#asset-summary').innerHTML='<h3>命名预览与纠正</h3><p class="description">本地文件保持原样。调整类型、日期或名称后，点击“重新预览命名”。六面图和包装设计的源文件按规范归档，图片保留原名；重名会自动加后缀，请核对清单。</p>'+(selection.folders||[]).map(folder=>{
+  const editable=selection.files.filter(f=>f.folderKey===folder.key&&f.kind==='output'&&['six','detail','packaging'].includes(folder.category));
   return '<section class="naming-editor" data-folder-key="'+esc(folder.key)+'"><h3>'+esc(folder.originalFolder)+'</h3><div class="naming-fields"><label class="field"><span>产物类型</span><select data-naming-category><option value="">请选择类型</option>'+(folder.skipped?'<option value="'+esc(folder.category)+'" selected>此类型已归档（可改选其他类型）</option>':'')+context.spec.categories.map(c=>'<option value="'+esc(c.id)+'"'+(c.id===folder.category?' selected':'')+'>'+esc(c.output)+'</option>').join('')+'</select></label><label class="field"><span>交付日期（月日，例如 0924）</span><input data-naming-date value="'+esc(folder.date)+'" maxlength="4" inputmode="numeric"></label></div><p class="description">归档文件夹：'+esc(folder.folder||'选择类型后生成')+'</p>'+[...new Set((folder.namingIssues||[]).map(i=>i.message))].map(message=>'<p class="form-error">'+esc(message)+'</p>').join('')+(editable.length?'<div class="naming-faces">'+editable.map(f=>{
    const value=f.suggestedName||f.relativePath.split('/').at(-1);
    return '<label><span>'+esc(f.relativePath)+'</span><input class="field-input" data-output-path="'+esc(f.relativePath)+'" value="'+esc(value)+'" aria-label="归档文件名"></label>';

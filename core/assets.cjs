@@ -31,7 +31,8 @@ function archiveSpec(task,item,folder,{allowArchived=false}={}){
  if(!cat)fail('资产类别或设计师资料不完整');
  const base=prefix+cat.output;
  const group=(task.items||[item]).filter(i=>i.category===item.category);
- const count=group.reduce((sum,i)=>{const rate=rateFor(i.type);return sum+(rate.base?rate.base*i.qty+(i.extra||0):i.qty)},0);
+ // Storyboards and packaging proposals are work units, not exported-file counts.
+ const count=group.some(i=>['video-storyboard','packaging-design'].includes(i.type))?null:group.reduce((sum,i)=>{const rate=rateFor(i.type);return sum+(rate.base?rate.base*i.qty+(i.extra||0):i.qty)},0);
  return {base,category:cat.id,expectedCount:count,product:item.product,folderUploadVersion:1};
 }
 function validateTaskManifest(task,files,delivery,options){
@@ -71,7 +72,7 @@ function validateManifest(task,item,files,delivery){
     relative=file.name;
    }else{
     if(!IMAGE_EXT.has(ext)||file.folder!==spec.base)fail('封存失败，产物文件夹命名不符合规则。');
-    if(spec.category!=='six'){
+    if(!['six','packaging'].includes(spec.category)){
      const prefix=spec.category==='detail'?folderName(item.product)+'-详情':CATEGORIES.find(c=>c.id===spec.category).output;
      if(!stem.startsWith(prefix)||!/^\d{2}$/.test(stem.slice(prefix.length))||Number(stem.slice(prefix.length))<1)fail('封存失败，图片画板命名不符合规则。');
     }
@@ -83,10 +84,11 @@ function validateManifest(task,item,files,delivery){
   return {id:String(index),name:file.name,folder:file.folder||'',kind:file.kind,size:file.size,sha256:file.sha256,relative};
  });
  if(spec.category!=='video'&&!sources.length)fail('请选择可编辑的源文件');
- if(spec.category!=='project'&&outputs.length!==spec.expectedCount)fail('最终产物数量应为 '+spec.expectedCount+'，当前为 '+outputs.length);
+ if(spec.category!=='project'&&spec.expectedCount!=null&&outputs.length!==spec.expectedCount)fail('最终产物数量应为 '+spec.expectedCount+'，当前为 '+outputs.length);
+ if(spec.category!=='project'&&spec.expectedCount==null&&!outputs.length)fail('最终产物至少应有 1 个，当前为 0');
  if(total>20*1024**3)fail('本次封存总大小不能超过 20 GB，请拆分事项');
 
- if(spec.category!=='video'&&spec.category!=='six'&&outputs.length){
+ if(!['video','six','packaging'].includes(spec.category)&&outputs.length){
   const nums=outputs.map(f=>Number(path.basename(f.name,path.extname(f.name)).slice(-2))).sort((a,b)=>a-b);
   if(nums.some((n,i)=>n!==i+1))fail('图片序号需要从 01 连续编号');
  }

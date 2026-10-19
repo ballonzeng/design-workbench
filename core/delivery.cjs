@@ -7,7 +7,7 @@ const LIMITS={files:500,directories:1000,depth:24,fileSize:8*1024**3,totalSize:2
 function normalizeDeliveryFolder(value){
  const text=String(value??'').normalize('NFKC').trim().replace(/[‐‑‒–—−_]/g,'-').replace(/\s*-\s*/g,'-');
  const parts=text.split('-');if(parts.length!==3)return text;
- const aliases={sku:'SKU','sku图':'SKU','详情':'详情页','主图':'主图','六面图':'六面图','创意图':'创意图','创意视频':'创意视频','工程':'工程'};
+ const aliases={sku:'SKU','sku图':'SKU','详情':'详情页','主图':'主图','六面图':'六面图','创意图':'创意图','创意视频':'创意视频','产品视频':'创意视频','包装':'包装设计','包装设计':'包装设计','工程':'工程'};
  parts[2]=aliases[parts[2].toLowerCase()]||parts[2];return parts.join('-');
 }
 const ignoredDeliveryEntry=name=>['thumbs.db','desktop.ini','.ds_store'].includes(name.toLowerCase())||name.startsWith('._');

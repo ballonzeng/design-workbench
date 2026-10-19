@@ -19,11 +19,11 @@ function automaticNames(spec,raw,options={}){
  const files=raw.files.map(f=>{
   if(f.kind==='source')return {...f,...mapped.files.find(x=>x.relativePath===f.relativePath)};
   let requested=names.get(f.relativePath)||path.posix.basename(f.relativePath);
-  if(repair&&['detail','six'].includes(spec.category)&&Object.hasOwn(overrides,f.relativePath)){requested=overrides[f.relativePath];if(typeof requested!=='string'||path.posix.basename(requested)!==requested||requested.includes('\\')||path.posix.extname(requested).toLowerCase()!==path.posix.extname(f.relativePath).toLowerCase())fail('目标文件名不能包含路径或改变扩展名');safeName(requested,'目标文件名')}
+  if(repair&&['detail','six','packaging'].includes(spec.category)&&Object.hasOwn(overrides,f.relativePath)){requested=overrides[f.relativePath];if(typeof requested!=='string'||path.posix.basename(requested)!==requested||requested.includes('\\')||path.posix.extname(requested).toLowerCase()!==path.posix.extname(f.relativePath).toLowerCase())fail('目标文件名不能包含路径或改变扩展名');safeName(requested,'目标文件名')}
   const name=requested,relative=spec.category==='video'?(names.get(f.relativePath)||spec.base+path.posix.extname(name)):spec.base+'/'+name;
   return {...f,name:path.posix.basename(relative),relative};
  });
- if(repair&&['detail','six'].includes(spec.category)){
+ if(repair&&['detail','six','packaging'].includes(spec.category)){
   const used=new Set();for(const f of [...files].sort((a,b)=>a.relativePath<b.relativePath?-1:1)){let relative=f.relative;const ext=path.posix.extname(relative),stem=relative.slice(0,-ext.length);let n=1;while(used.has(relative.toLowerCase()))relative=stem+'-'+String(n++).padStart(2,'0')+ext;used.add(relative.toLowerCase());f.relative=relative;f.name=path.posix.basename(relative)}
  }
  const seen=new Set(),dirs=new Map(mapped.directories.map(d=>[d.relative.toLowerCase(),d]));

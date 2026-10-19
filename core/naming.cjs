@@ -3,7 +3,7 @@ const path=require('node:path');
 const {fail,CATEGORIES,safeName}=require('./rules.cjs');
 function inferCategory(text,selected){
  if(selected){if(!CATEGORIES.some(c=>c.id===selected))fail('请选择有效产物类型');return selected}
- const patterns={main:/主图/,sku:/sku/i,detail:/详情/,six:/六面|正面|背面|左侧|右侧|顶面|底面/,creative:/创意图/,video:/视频|\.mp4/i,project:/c4d|刀版|工程/i};
+ const patterns={main:/主图/,sku:/sku/i,detail:/详情/,six:/六面|正面|背面|左侧|右侧|顶面|底面/,creative:/创意图/,video:/视频|\.mp4/i,packaging:/包装/,project:/c4d|刀版|工程/i};
  const found=Object.entries(patterns).filter(([,re])=>re.test(text)).map(([id])=>id);
  if(found.length!==1)fail(found.length?'识别到多个产物类型，请选择本次上传类型，或分成不同文件夹上传':'未识别产物类型，请选择主图、详情页、SKU 等类型后重试');return found[0];
 }
@@ -25,7 +25,7 @@ function nameDelivery(spec,classified,{repair=false}={}){
    if(spec.category==='video')relative=spec.base+ext;
    else{
     const patterns={main:/^主图\d{2}$/,sku:/^SKU\d{2}$/,creative:/^创意图\d{2}$/,six:/^(正面|背面|左侧|右侧|顶面|底面)$/};
-    const valid=spec.category==='six'||(spec.category==='detail'?stem.startsWith(spec.product+'-详情')&&/^\d{2}$/.test(stem.slice((spec.product+'-详情').length)):patterns[spec.category]?.test(stem));
+    const valid=['six','packaging'].includes(spec.category)||(spec.category==='detail'?stem.startsWith(spec.product+'-详情')&&/^\d{2}$/.test(stem.slice((spec.product+'-详情').length)):patterns[spec.category]?.test(stem));
     if(!valid)fail('图片名不符合画板规则：'+f.relativePath+'。请从源文件按正确画板名重新导出，程序不会二次重命名图片');
     relative=spec.base+'/'+path.posix.basename(f.relativePath);
    }

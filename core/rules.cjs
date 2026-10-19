@@ -19,6 +19,7 @@ const CATEGORIES=[
   {id:'six',name:'六面图',folder:'01.六面图',output:'六面图'},
   {id:'creative',name:'创意图',folder:'05.创意图',output:'创意图'},
   {id:'video',name:'创意视频',folder:'06.创意视频',output:'创意视频'},
+  {id:'packaging',name:'包装设计',folder:'07.包装设计',output:'包装设计'},
   {id:'project',name:'工程',folder:'00.产品素材-工程',output:'工程'}
 ];
 const RATE_ROWS=[
@@ -44,7 +45,9 @@ const RATE_ROWS=[
  ['detail-full','完整详情页精做',1.5,'屏'],
  ['live-text','达播文字修改内容',.15,'张'],
  ['live-size','达播尺寸适配',.4,'张'],
- ['live-create','达播内容制作',1,'张']
+ ['live-create','达播内容制作',1,'张'],
+ ['packaging-design','包装设计',4,'套'],
+ ['video-storyboard','产品视频',2.5,'分镜']
 ];
 const RATES=RATE_ROWS.map(([id,name,points,unit,base=0,extra=0,min=1])=>({id,name,points,unit,base,extra,min}));
 const normalize=v=>String(v??'').replace(/\s+/g,'').replace(/[()]/g,x=>x==='('?'（':'）');
@@ -68,10 +71,11 @@ function inferredCategory(type,sheets=[]){
  if(/SKU/.test(n))return 'sku';
  if(/详情/.test(n))return 'detail';
  if(/视频/.test(n))return 'video';
+ if(/包装/.test(n))return 'packaging';
  if(/创意图/.test(n))return 'creative';
  if(/主图/.test(n))return 'main';
  const exact=CATEGORIES.filter(c=>sheets.includes(c.name));if(exact.length)return exact.length===1?exact[0].id:null;
- const matches=CATEGORIES.filter(c=>sheets.some(sheet=>{const s=normalize(sheet);return c.id==='sku'?/sku/i.test(s):c.id==='detail'?/详情/.test(s):c.id==='six'?/六面/.test(s):c.id==='creative'?/创意图|创图/.test(s):c.id==='video'?/视频/.test(s):c.id==='project'?/工程/.test(s):/主图/.test(s)}));
+ const matches=CATEGORIES.filter(c=>sheets.some(sheet=>{const s=normalize(sheet);return c.id==='sku'?/sku/i.test(s):c.id==='detail'?/详情/.test(s):c.id==='six'?/六面/.test(s):c.id==='creative'?/创意图|创图/.test(s):c.id==='video'?/视频/.test(s):c.id==='packaging'?/包装/.test(s):c.id==='project'?/工程/.test(s):/主图/.test(s)}));
  return matches.length===1?matches[0].id:null;
 }
 function own(actor,t){if(actor.role!=='designer'||actor.personId!==t.owner)fail('只能操作分配给自己的任务',403)}
