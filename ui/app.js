@@ -122,7 +122,7 @@ function selectedTasks(){
 function tasksPage(){
  const unread=data.tasks.filter(t=>!t.readAt&&t.assignmentId&&t.state<4),label=person?peopleName(person)+'的任务':view==='seal'?'待封存':'我的任务';
  const title=manager()?(person?label:'任务列表'):label,description=manager()?(person?'已分配任务与等待事项，一眼看清进度。':'待分配任务优先排列，操作后需求表自动流转。'):view==='seal'?'运营已经确认完成，上传最终产物并封存。':'从这里开始设计，每一次进展都会同步给负责人。';
- const actions=(manager()?button(icon('refresh-cw')+'刷新已完结','refresh-completed','',false,!connected()):'')+(person?button(icon('arrow-left')+'返回人员','back-team'):'')+(manager()?button(icon('upload')+'上传需求','import-open','',true,!connected()):'');
+ const actions=(manager()?button(icon('refresh-cw')+'刷新已完结','refresh-completed','',false,!connected()):'')+(person?button(icon('arrow-left')+'返回人员','back-team'):'')+(manager()?button(icon('upload')+'上传需求','import-open','',true,!connected()):button(icon('file-down')+'导出我的任务明细','personal-report-open','data-frequency="week"',false,!data.connection?.online||!data.personalReportVersion));
  let html=heading(title,description,actions,manager()?'TASKS':'MY WORK');
  if(!manager()&&unread.length&&view!=='seal')html+='<div class="new-inbox"><div class="inbox-icon">'+icon('bell-ring')+'</div><div><h3>你有 '+unread.length+' 项新分配任务</h3><p>'+esc(unread.slice(0,2).map(taskName).join('、'))+'</p></div>'+button('查看新任务','open-new','data-task="'+unread[0].id+'"',true)+'</div>';
  if(view!=='seal')html+='<div class="list-tools"><div class="segmented" aria-label="任务状态">'+[['all','全部'],...states.map((s,i)=>[String(i),s]).filter(([i])=>manager()||i!=='0'),...(manager()?[['unsealed','待封存']]:[])].map(([value,label])=>'<button class="segment '+(filter===value?'active':'')+'" data-filter="'+value+'" aria-pressed="'+(filter===value)+'">'+label+(manager()?'<span class="filter-count">'+data.tasks.filter(t=>(!person||t.owner===person)&&(value==='all'||(value==='unsealed'?t.state===4&&!t.sealed:t.state===Number(value)))).length+'</span>':'')+'</button>').join('')+'</div><label class="search">'+icon('search')+'<input id="task-search" value="'+esc(query)+'" placeholder="搜索任务名、产品名、69码" aria-label="搜索任务"></label></div>';
@@ -151,6 +151,14 @@ function productsPage(){
  '<div class="list-tools"><label class="search">'+icon('search')+'<input id="product-search" value="'+esc(query)+'" placeholder="搜索品牌、产品名、别名或69码" aria-label="搜索产品归组"></label><span class="description">'+groups.length+' 个产品系列 · '+groups.reduce((sum,group)=>sum+(group.variants?.length||0),0)+' 个69码</span></div>'+
  (groups.length?'<div class="product-groups">'+groups.map(group=>'<article class="product-group-card"><div class="product-group-head"><div><p>'+esc(group.brand)+'</p><h2>'+esc(group.canonicalName)+'</h2></div>'+button('管理归组'+icon('chevron-right'),'product-group-open','data-group="'+group.id+'"')+'</div>'+(group.aliases?.length?'<div class="product-aliases">'+group.aliases.map(alias=>'<span>'+esc(alias)+'</span>').join('')+'</div>':'')+'<div class="variant-list">'+group.variants.map(variant=>'<div class="variant-row"><span class="variant-code">'+esc(variant.code)+'</span><div><strong>'+esc(variant.name)+'</strong><small>'+(variant.spec?'规格 '+esc(variant.spec):'规格未单独标注')+'</small></div><span class="variant-path">'+(variant.path?'已定位 NAS':'等待首次封存')+'</span></div>').join('')+'</div></article>').join('')+'</div>':empty('还没有产品归组','连接 NAS 后，已有“产品名-69码”目录会自动建立索引。'));
 }
+function personalReportsPage(){
+ const ready=!!data.connection?.online&&!!data.personalReportVersion;
+ const message=!data.connection?.online?'连接负责人端后即可导出。':!data.personalReportVersion?'请先更新负责人主机，才能导出个人任务明细。':'导出当前登录人 '+esc(data.person?.name||'')+' 的任务记录。';
+ return heading('我的任务明细','日期、69码、对接运营、设计者、任务名、事项、张数。','','MY WORK EXPORT')+
+ '<p class="notice">'+message+'</p>'+
+ '<div class="report-grid">'+[['week','周任务明细','选择周一至周日的个人任务。','calendar-days'],['month','月任务明细','选择一个自然月的个人任务。','calendar-range']].map(([frequency,title,copy,i])=>'<article class="report-card"><span class="report-icon '+frequency+'">'+icon(i)+'</span><h2>'+title+'</h2><p>'+copy+'</p>'+button('选择日期并导出','personal-report-open','data-frequency="'+frequency+'"',true,!ready)+'</article>').join('')+'</div>'+
+ '<div class="report-note">'+icon('calendar')+'<div><strong>自选日期</strong><p>选择开始日和结束日。</p></div>'+button('自选日期','personal-report-open','data-frequency="custom"',false,!ready)+'</div>';
+}
 function reportsPage(){
  return heading('数据分析导出','按周或按月生成结构化 Excel，直接交给 AI 做人员、任务、产品和流程分析。','','ANALYTICS EXPORT')+
  '<div class="report-hero"><div class="report-hero-icon">'+icon('sparkles')+'</div><div><h2>可核对的数据，直接交给分析 Agent</h2><p>导出包包含 Excel、数据 JSON、报告摘要和分析提示词。先核对口径与数据质量，再分析目标进度、等待环节、需求结构及运营评分。</p><div class="dimension-chips"><span>人员</span><span>任务</span><span>事项</span><span>产品</span><span>状态</span><span>时间</span></div></div></div>'+
@@ -176,7 +184,7 @@ function settingsPage(){
 function render({animate=false}={}){
  if(composingSearch)return;
  const roleLabel=manager()?'负责人端':'设计端',roleIcon=manager()?'../assets/icon-manager.png':'../assets/icon-designer.png';document.documentElement.dataset.role=data.role;$('#app-icon').src=roleIcon;$('#client-label').textContent=roleLabel;$('#window-role').textContent=roleLabel;$('#app-version').textContent='v'+(data.version||'—');document.title='设计协作·'+roleLabel+' v'+(data.version||'')+' · Design by Mason Zeng';$('#identity-name').textContent=data.person?.name||'等待连接';$('#identity-avatar').textContent=data.person?.name.slice(-2)||'设';
- const nav=manager()?[['team','人员看板','users-round'],['tasks','任务列表','layout-grid'],['reports','数据导出','file-chart-column-increasing'],['products','产品归组','boxes'],['assets','资产查询','folder-check'],['settings','连接与维护','settings-2']]:[['tasks','我的任务','layout-grid'],['seal','待封存','archive'],['assets','资产查询','folder-check'],['settings','连接与提醒','settings-2']];
+ const nav=manager()?[['team','人员看板','users-round'],['tasks','任务列表','layout-grid'],['reports','数据导出','file-chart-column-increasing'],['products','产品归组','boxes'],['assets','资产查询','folder-check'],['settings','连接与维护','settings-2']]:[['tasks','我的任务','layout-grid'],['seal','待封存','archive'],['reports','任务明细导出','file-spreadsheet'],['assets','资产查询','folder-check'],['settings','连接与提醒','settings-2']];
  $('#navigation').innerHTML=nav.map(([id,label,i])=>'<button class="nav-item '+(view===id?'active':'')+'" data-view="'+id+'">'+icon(i)+'<span>'+label+'</span>'+(manager()&&id==='tasks'&&data.tasks.some(t=>t.state===0)?'<span class="badge" aria-label="待分配">'+data.tasks.filter(t=>t.state===0).length+'</span>':'')+(id==='seal'&&data.tasks.some(t=>t.state===4&&!t.sealed)?'<span class="badge">'+data.tasks.filter(t=>t.state===4&&!t.sealed).length+'</span>':'')+'</button>').join('');
  $('#breadcrumb').textContent=(manager()?'负责人工作台':'设计工作台')+' / '+(nav.find(n=>n[0]===view)?.[1]||'我的任务');
  $('#current-date').textContent=new Date(now()).toLocaleDateString('zh-CN',{timeZone:'Asia/Shanghai',month:'long',day:'numeric',weekday:'long'});
@@ -187,7 +195,7 @@ function render({animate=false}={}){
  if(data.requiresPairing)main.innerHTML=pairingPage();
  else if(view==='team')main.innerHTML=teamPage();
  else if(view==='assets')main.innerHTML=assetsPage();
- else if(view==='reports')main.innerHTML=reportsPage();
+ else if(view==='reports')main.innerHTML=manager()?reportsPage():personalReportsPage();
  else if(view==='products')main.innerHTML=productsPage();
  else if(view==='settings')main.innerHTML=settingsPage();
  else main.innerHTML=tasksPage();
@@ -256,6 +264,24 @@ function importSheet(){openSheet('上传需求','<p class="description">选择�
 function reportSheet(frequency){
  const weekly=frequency==='week',today=new Date(now()+8*3600000).toISOString().slice(0,10);
  openSheet(weekly?'导出周度数据表':'导出月度数据表','<p class="description">'+(weekly?'选择这一周内的任意一天，系统会自动按周一至周日统计。':'选择目标月份内的任意一天，系统会自动统计整个自然月。')+'</p><label class="field"><span>'+(weekly?'选择周':'选择月份')+'</span><button type="button" class="calendar-trigger" data-calendar="report" data-mode="'+(weekly?'week':'month')+'" id="report-anchor" value="'+today+'">'+today+icon('calendar-days')+'</button></label><div class="report-sheet-list"><span>'+icon('table-2')+'Excel 明细、摘要与工作日历</span><span>'+icon('bot')+'附带 JSON、分析提示词与校验脚本</span><span>'+icon('list-filter')+'表头冻结并支持筛选</span></div><div class="sheet-actions">'+button(icon('file-down')+'导出分析包 ZIP','report-export','',true)+'</div>',{frequency},'EXPORT DATA');
+}
+function personalReportSheet(frequency='week'){
+ const today=dayKey(now()),custom=frequency==='custom',weekly=frequency==='week';
+ const dateField=(id,label,value,mode)=>'<label class="field"><span>'+label+'</span><button type="button" class="calendar-trigger" data-calendar="personal-report" data-mode="'+mode+'" id="'+id+'" value="'+value+'">'+value+icon('calendar-days')+'</button></label>';
+ openSheet('导出我的任务明细','<p class="description">'+esc(data.person?.name||'')+' · '+(custom?'选择开始日和结束日（均包含在内）。':weekly?'选择这一周内的任意一天，统计周一至周日。':'选择目标月份，统计整个自然月。')+'</p>'+
+ (custom?dateField('personal-start','开始日期',today,'day')+dateField('personal-end','结束日期',today,'day'):dateField('personal-anchor',weekly?'选择周':'选择月份',today,frequency))+
+ (weekly?'<div class="calendar-actions">'+button('本周','personal-report-quick','data-offset="0"')+button('上周','personal-report-quick','data-offset="-7"')+'</div>':'')+
+ '<p id="personal-range" class="notice"></p><div class="sheet-actions">'+button(icon('file-down')+'导出 Excel','personal-report-export','',true)+'</div>',{frequency},'MY WORK EXPORT');
+ updatePersonalRange();
+}
+function updatePersonalRange(){
+ const label=$('#personal-range');if(!label)return;
+ const frequency=dialogContext.frequency,anchor=$('#personal-anchor')?.value;
+ let from,to;
+ if(frequency==='custom'){from=$('#personal-start').value;to=$('#personal-end').value}
+ else if(frequency==='month'){from=anchor.slice(0,7)+'-01';const d=new Date(anchor+'T12:00:00Z');to=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).toISOString().slice(0,10)}
+ else{const d=new Date(anchor+'T12:00:00Z'),start=+d-((d.getUTCDay()+6)%7)*86400000;from=new Date(start).toISOString().slice(0,10);to=new Date(start+6*86400000).toISOString().slice(0,10)}
+ label.textContent='统计区间：'+from+' 至 '+to+'（北京时间）';
 }
 function productGroupSheet(id){
  const group=productGroups.find(item=>item.id===id);if(!group)return;
@@ -393,7 +419,7 @@ document.addEventListener('submit',e=>{
  if(form.id==='nas-form')run(submit,async()=>{try{await api('configure',{taskRoot:$('#task-root').value.trim(),assetRoot:$('#asset-root').value.trim()});accept(await api('snapshot'));toast('已连接现有 NAS，可以导入需求')}catch(err){$('#nas-error').textContent=err.message;$('#nas-error').hidden=false}});
 });
 document.addEventListener('click',async e=>{
- const calendar=e.target.closest('[data-calendar]');if(calendar&&!calendar.disabled){window.workbenchCalendar.open({value:calendar.dataset.calendar==='work-policy'?calendar.value+'-01':calendar.value,mode:calendar.dataset.calendar==='asset'?assetPeriod:calendar.dataset.mode,animate:lastInput==='pointer',onChange:value=>{if(calendar.dataset.calendar==='work-policy'){calendar.value=value.slice(0,7);calendar.innerHTML=esc(calendar.value.replace('-',' 年 ')+' 月')+icon('calendar-days');icons();calendar.dispatchEvent(new Event('change',{bubbles:true}))}else if(calendar.dataset.calendar==='asset'){assetDate=value;render();$('#asset-date')?.focus({preventScroll:true})}else{calendar.value=value;calendar.innerHTML=esc(value)+icon('calendar-days');icons()}}});return}
+ const calendar=e.target.closest('[data-calendar]');if(calendar&&!calendar.disabled){const workPolicy=calendar.dataset.calendar==='work-policy';window.workbenchCalendar.open({value:workPolicy?calendar.value+'-01':calendar.value,mode:calendar.dataset.calendar==='asset'?assetPeriod:calendar.dataset.mode,animate:lastInput==='pointer',onChange:value=>{if(workPolicy){calendar.value=value.slice(0,7);calendar.innerHTML=esc(calendar.value.replace('-',' 年 ')+' 月')+icon('calendar-days');icons();calendar.dispatchEvent(new Event('change',{bubbles:true}))}else if(calendar.dataset.calendar==='asset'){assetDate=value;render();$('#asset-date')?.focus({preventScroll:true})}else{calendar.value=value;calendar.innerHTML=esc(value)+icon('calendar-days');icons();if(calendar.dataset.calendar==='personal-report')updatePersonalRange()}}});return}
  const period=e.target.closest('[data-period]');if(period){assetPeriod=period.dataset.period;render();return}
  const el=e.target.closest('button');if(!el||el.disabled)return;if(el.dataset.view){navigate(el.dataset.view);return}if(el.dataset.filter!==undefined){filter=el.dataset.filter;render();return}
  const command=el.dataset.command,t=data.tasks.find(t=>t.id===el.dataset.task);
@@ -416,6 +442,8 @@ document.addEventListener('click',async e=>{
  if(command==='pair-person'){pairPerson(el.dataset.person);return}
  if(command==='import-open'){importSheet();return}
  if(command==='report-open'){reportSheet(el.dataset.frequency);return}
+ if(command==='personal-report-open'){personalReportSheet(el.dataset.frequency);return}
+ if(command==='personal-report-quick'){const calendar=$('#personal-anchor'),value=dayKey(now()+Number(el.dataset.offset)*86400000);calendar.value=value;calendar.innerHTML=esc(value)+icon('calendar-days');icons();updatePersonalRange();return}
  if(command==='product-group-open'){productGroupSheet(el.dataset.group);return}
  if(command==='seal-open'){sealSheet(el.dataset.task);return}
  if(command==='manager-archive-open'){managerArchiveSheet(el.dataset.task);return}
@@ -460,6 +488,11 @@ document.addEventListener('click',async e=>{
   else if(command==='draft-pick')await pickDraft();
   else if(command==='import-submit'){
    await api('import',{draftId:dialogContext.draft.id});closeSheet();accept(await api('snapshot'));await navigate('tasks');toast('需求已上传到待分配');
+  }
+  else if(command==='personal-report-export'){
+   const context=dialogContext;
+   const result=await api('export-personal-report',{frequency:context.frequency,anchor:$('#personal-anchor')?.value,startDate:$('#personal-start')?.value,endDate:$('#personal-end')?.value});
+   if(result){if(dialogContext===context)closeSheet();toast('已导出 '+result.counts.tasks+' 个任务')}
   }
   else if(command==='report-export'){
    const result=await api('export-report',{frequency:dialogContext.frequency,anchor:$('#report-anchor').value});
