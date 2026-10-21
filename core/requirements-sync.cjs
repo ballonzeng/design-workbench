@@ -8,6 +8,19 @@ const {hasWorkbookLock}=require('./workbook-lock.cjs');
 const identity=t=>JSON.stringify([t.requestedAt,t.brand,t.workbookBrand,t.code,t.product]);
 const itemIdentity=item=>[item.row,item.type,item.qty,item.extra||0,item.brand,item.workbookBrand,item.product,item.code,item.linkId||'',item.note||'',item.category||null];
 const itemsIdentity=items=>JSON.stringify(items.map(itemIdentity));
+function isBarcodeOnlyChange(old,parsed,fields,location){
+ if(parsed.workbookTaskId!==old.id||parsed.code===old.code||!R.validCode(parsed.code))return false;
+ if(['requestedAt','product','brand','workbookBrand','operator','requestedDesigner','title'].some(k=>parsed[k]!==old[k]))return false;
+ if(location.state!==old.state||location.filename!==old.filename)return false;
+ const baseline=baselineFor(old);if(Object.keys(baseline).some(k=>fields[k]!==baseline[k]))return false;
+ const normalized=parsed.items.map(i=>({...i,category:old.items.find(previous=>previous.row===i.row)?.category??null}));
+ return itemsIdentity(old.items.map(i=>({...i,code:parsed.code})))===itemsIdentity(normalized);
+}
+function onlyBarcodeSync(before,after){
+ if(before.id!==after.id||before.code===after.code||after.version<=before.version)return false;
+ const business=task=>{const value=structuredClone(task);for(const key of ['code','version','workbookHash','workbookSyncIssue','updatedAt','externalSyncedAt'])delete value[key];value.items=value.items.map(i=>({...i,code:''}));if(!value.workbookTaskId)value.workbookTaskId=value.id;return JSON.stringify(value)};
+ return business(before)===business(after);
+}
 const fileKey=name=>name.toLowerCase().replace(/-[^-]+\.xlsx$/,'');
 function assignedInboxState(parsed,fields,location,old=null,uploads=[]){
  if(location.state!==0||parsed.requestedDesigner==='未分配'||!R.PEOPLE.some(p=>p.name===parsed.requestedDesigner)||!parsed.templateTimes.assignedAt)return location.state;
@@ -24,9 +37,12 @@ function baselineFor(task){
 function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  if(parsed.workbookTaskId&&parsed.workbookTaskId!==old.id)R.fail('需求表内部编号与当前任务不同，请负责人核对，未替换原任务');
  const archived=hasCurrentAssets(old),publishing=hasPublishingUpload(old,uploads);
+ const barcodeChange=isBarcodeOnlyChange(old,parsed,fields,location),codeCorrection=barcodeChange&&!archived&&!publishing;
+ if(barcodeChange&&archived)R.fail('69码已更正，但此任务已有归档产物。请负责人回退时勾选“原表的69码已更正”，保留原产物历史后继续');
+ if(barcodeChange&&publishing)R.fail('69码已更正，当前产物正在归档；请等待完成后由负责人核对，未改动原交付');
  const dateCorrection=parsed.workbookTaskId===old.id&&old.brand===parsed.brand&&old.workbookBrand===parsed.workbookBrand&&old.code===parsed.code&&old.product===parsed.product&&!archived;
- if(identity(old)!==identity(parsed)&&!dateCorrection)R.fail('需求的产品、69码或需求时间已变化，请负责人核对；未自动替换已导入任务');
- const itemsChanged=itemsIdentity(old.items)!==itemsIdentity(parsed.items);
+ if(identity(old)!==identity(parsed)&&!dateCorrection&&!codeCorrection)R.fail('需求的产品、69码或需求时间已变化，请负责人核对；未自动替换已导入任务');
+ const itemsChanged=itemsIdentity(old.items.map(i=>codeCorrection?{...i,code:parsed.code}:i))!==itemsIdentity(codeCorrection?parsed.items.map(i=>({...i,category:old.items.find(previous=>previous.row===i.row)?.category??null})):parsed.items);
  if(itemsChanged&&old.state===4)R.fail('已完结任务的事项已修改，请负责人保存并关闭 Excel 后，在任务详情中点击“校准点数”');
  if(itemsChanged&&archived)R.fail('此需求已有封存资产，不能再修改事项；请先核对或撤销对应封存');
  const baseline=baselineFor(old),changed=keys=>keys.some(k=>fields[k]!==baseline[k]);
@@ -53,7 +69,9 @@ function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  next.filename=location.filename;next.title=parsed.title;next.brand=parsed.brand;next.workbookBrand=parsed.workbookBrand;next.operator=parsed.operator;next.requestedDesigner=parsed.requestedDesigner;next.state=state;next.owner=owner;
  next.workbookTaskId=parsed.workbookTaskId||old.workbookTaskId||null;
  if(itemsChanged)next.items=parsed.items;
+ if(codeCorrection){next.code=parsed.code;for(const item of next.items)item.code=parsed.code}
  next.ratings=state===4?parsed.ratings:null;
+ if(codeCorrection&&state===old.state&&owner===old.owner&&state!==4)next.ratings=old.ratings;
  next.workflowFields=fields;next.workbookHash=parsed.sourceHash;next.workbookSyncIssue=null;next.externalSyncedAt=now;
  if(moved||assigned){
   if(old.runningSince&&old.timingTracked){next.workIntervals=[...(old.workIntervals||[]),{start:old.runningSince,end:now,owner:old.owner}]}
@@ -73,7 +91,7 @@ function reconcileTask(old,parsed,fields,location,now=Date.now(),uploads=[]){
  const archiveChanged=state!==old.state||archiveIdentity(next)!==archiveIdentity(old);
  if(archiveChanged&&publishing)R.fail('产物正在归档或等待回填恢复，不能修改需求或流程；请先恢复原表并完成归档');
  if(archiveChanged&&archived)R.fail('此需求已有归档资产，不能更改已确认的需求内容；请由负责人回退任务');
- if(old.state===4&&archiveChanged)resetArchive(next,old,now);
+ if(old.state===4&&archiveChanged){const ratings=next.ratings;resetArchive(next,old,now);if(codeCorrection)next.ratings=ratings}
  next.updatedAt=now;next.version++;
  return next;
 }
@@ -149,6 +167,7 @@ class RequirementsSync{
        }
        const next=reconcileTask(current,parsed,fields,location,Date.now(),this.store.all('upload'));
        const event={kind:'excel-synced',actor:'nas',body:{from:current.state,to:next.state,source:location.stage,filename:location.filename,owner:next.owner,itemsChanged:itemsIdentity(current.items)!==itemsIdentity(next.items),previousPoints:R.total(current),nextPoints:R.total(next)}};
+       if(current.code!==next.code){event.body.codeCorrection={from:current.code,to:next.code};event.body.itemsChanged=false}
        if(next.state!==location.state){
         // Use the saved external file as the journal's guarded source; do not overwrite external edits.
         await this.nas.sync({...current,state:location.state,filename:location.filename,workbookHash:hash},next,{},event);
@@ -179,4 +198,4 @@ class RequirementsSync{
   return {checked:!this.status.error,codeCorrection,taskIssues:this.store.all('task').filter(t=>(targetId?t.id===targetId:includeCompleted||t.state!==4)&&t.workbookSyncIssue).length,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }
-module.exports={RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState};
+module.exports={RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState,isBarcodeOnlyChange,onlyBarcodeSync};

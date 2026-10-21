@@ -107,6 +107,28 @@ function barcodeFromCell(value){
  if(codes.length!==1||!validCode(codes[0]))fail('Excel 的 69码板块缺少有效的 13 位产品69码');
  return codes[0];
 }
+function patchBarcode(bytes,code){
+ if(typeof code!=='string'||!validCode(code))fail('请填写以69开头的13位产品69码');
+ const wb=unpack(bytes),s=wb.status,v=a=>mergedValue(s,a);
+ const column=Array.from({length:26},(_,i)=>String.fromCharCode(65+i)).find(c=>/^(产品)?69(条)?码$/.test(normalize(v(c+'5'))));
+ if(!column)fail('Excel 中未找到“69码”板块');
+ const targets=new Set();
+ for(let row=6;row<=200;row++){
+  if(!cellText(v('F'+row))||Number(cellText(v('G'+row)))===0)continue;
+  let addr=column+row;
+  for(const range of s.merges){const m=range.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);if(m&&m[1]===column&&m[3]===column&&row>=+m[2]&&row<=+m[4]){addr=m[1]+m[2];break}}
+  const cell=s.cells[addr];if(!cell||cell.formula)fail('69码单元格缺失或包含公式，未修改原需求表');targets.add(addr);
+ }
+ if(!targets.size)fail('需求表未填写有效事项，无法更正69码');
+ let xml=s.content;
+ for(const addr of targets){
+  const re=new RegExp('<c\\b(?=[^>]*\\br="'+addr+'")[^>]*?(?:\\/>|>[\\s\\S]*?<\\/c>)'),match=xml.match(re);
+  if(!match)fail('找不到69码单元格：'+addr);
+  const opening=match[0].match(/^<c\b[^>]*>/)[0].replace(/\/>$/,'>').replace(/\s+t="[^"]*"/,'');
+  xml=xml.replace(re,opening.slice(0,-1)+' t="inlineStr"><is><t>'+code+'</t></is></c>');
+ }
+ wb.entries[s.file]=strToU8(xml);return Buffer.from(zipSync(wb.entries,{level:6}));
+}
 function parseRequirement(bytes,filename,{categories={},extras={}}={}){
  const wb=unpack(bytes),s=wb.status,v=a=>mergedValue(s,a);
  if(normalize(v('B3'))!=='需求日期'||normalize(v('G3'))!=='分配设计'||normalize(v('L3'))!=='文件位置')fail('模板字段与当前适配版本不一致');
@@ -157,4 +179,4 @@ function patchWorkbook(bytes,patch,{resetRatingsFor=null}={}){
  wb.entries[s.file]=strToU8(xml);
  return Buffer.from(zipSync(wb.entries,{level:6}));
 }
-module.exports={unpack,parseRequirement,parseRequirementFilename,patchWorkbook,dateTime,mergedValue,cellText,compactText,barcodeFromCell,workflowFields,workbookTaskId,identifyWorkbook};
+module.exports={unpack,parseRequirement,parseRequirementFilename,patchWorkbook,patchBarcode,dateTime,mergedValue,cellText,compactText,barcodeFromCell,workflowFields,workbookTaskId,identifyWorkbook};

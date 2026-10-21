@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs');const fsp=fs.promises;const path=require('node:path');const https=require('node:https');const crypto=require('node:crypto');const {EventEmitter}=require('node:events');
 const selfsigned=require('selfsigned');const {Store,digest}=require('./store.cjs');const {Nas,exists,guarded}=require('./nas.cjs');const {Assets,archiveSpec}=require('./assets.cjs');const {parseRequirement,patchWorkbook,workflowFields,workbookTaskId,identifyWorkbook}=require('./workbook.cjs');
-const {RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState}=require('./requirements-sync.cjs');
+const {RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState,onlyBarcodeSync}=require('./requirements-sync.cjs');
 const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
@@ -235,11 +235,12 @@ class Service extends EventEmitter{
    return records;
   }
   // Synchronize saved edits before acquiring the mutation lock; retain version checks.
-  let codeCorrection=null;
+  let codeCorrection=null,actionBeforeSync=null;
   if(command==='action'){
    const task=this.store.get('task',payload.taskId);if(!task)R.fail('任务不存在',404);
    if(payload.action==='rollback')R.manager(actor);
    if(actor.role!=='manager')R.own(actor,task);
+   actionBeforeSync=structuredClone(task);
    if(payload.action==='rollback'){
     if(!task.sealed){const checked=await this.requirementsSync.checkTask(task.id,{acceptCodeCorrection:payload.confirmed===true&&payload.acceptCodeCorrection===true});if(!checked.checked)R.fail(checked.error||'当前需求表尚未检查完成',409);codeCorrection=checked.codeCorrection}
    }else await this.requirementsSync.check(true,{includeCompleted:task.state===4});
@@ -294,7 +295,8 @@ class Service extends EventEmitter{
      const uploads=this.store.all('upload').filter(u=>u.taskId===old.id&&(u.archiveRound||0)===(old.archiveRound||0));
      if(uploads.some(u=>u.status==='publishing'||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/'))))R.fail('产物正在写入或传输，请等待完成或恢复后再回退',409);
     }
-    const next=R.transition(old,actor,payload.action,payload);
+    const actionPayload=payload.action!=='rollback'&&payload.version===actionBeforeSync?.version&&onlyBarcodeSync(actionBeforeSync,old)?{...payload,version:old.version}:payload;
+    const next=R.transition(old,actor,payload.action,actionPayload);
     if(codeCorrection){next.task.code=codeCorrection.to;for(const item of next.task.items)item.code=codeCorrection.to;next.task.workbookSyncIssue=null}
     if(payload.action==='rollback'&&next.task.state===0)next.task.filename=R.stamp(old.requestedAt)+'-'+old.brand+'-'+(old.title||old.product)+'-'+old.operator+'-未分配.xlsx';
     if(payload.action==='assign')next.task.filename=R.stamp(old.requestedAt)+'-'+old.brand+'-'+(old.title||old.product)+'-'+old.operator+'-'+R.PEOPLE.find(p=>p.id===next.task.owner).name+'.xlsx';

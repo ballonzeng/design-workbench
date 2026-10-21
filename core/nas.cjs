@@ -114,11 +114,16 @@ class Nas{
   await fsp.writeFile(path.join(journal,'before.xlsx'),original,{flag:'wx'});
   await fsp.writeFile(path.join(journal,'after.xlsx'),bytes,{flag:'wx'});
   next.workbookHash=digest(bytes);next.workflowFields=workflowFields(bytes);next.workbookSyncIssue=null;
-  const job={id:jobId,kind:'workbook',status:'prepared',source,dest,backup,originalHash:digest(original),nextHash:next.workbookHash,next,event,at:Date.now()};
+  const job={id:jobId,kind:'workbook',status:'prepared',phase:'prepared',source,dest,backup,originalHash:digest(original),nextHash:next.workbookHash,next,event,at:Date.now()};
   this.store.put('job',jobId,job);
   try{
    if(await fileHash(source)!==job.originalHash)fail('需求表刚刚发生变化，请重试',409);
+   job.phase='moving';this.store.put('job',job.id,job);
    await fsp.rename(source,backup);
+   // A save can land after the last source hash read. Validate the exact file
+   // we moved before publishing an older journal over the newly saved version.
+   if(await fileHash(backup)!==job.originalHash)fail('需求表刚刚发生变化，已保留最新保存，请刷新后重试',409);
+   job.phase='publishing';this.store.put('job',job.id,job);
    await fsp.copyFile(path.join(journal,'after.xlsx'),dest,fs.constants.COPYFILE_EXCL);
    if(await fileHash(dest)!==job.nextHash)fail('NAS 需求表写入校验失败');
    this.finishJob(job);
@@ -126,10 +131,16 @@ class Nas{
    return next;
   }catch(e){
    job.error=e.message;this.store.put('job',job.id,job);
-   try{await this.recoverJob(job)}catch{}
+   try{await this.recoverJob(job)}catch(recoveryError){e.message+='；'+recoveryError.message}
    const current=this.store.get('task',next.id);if(current?.version===next.version&&current.workbookHash===next.workbookHash)return current;
    throw e;
   }
+ }
+ rollbackUnpublishedJob(job){
+  this.store.atomic(()=>{
+   this.store.put('job',job.id,{...job,status:'rolled-back'});
+   if(job.recoveryBlocked){const t=this.store.get('task',job.next.id),other=this.store.all('job').some(j=>j.id!==job.id&&j.status==='prepared'&&j.next?.id===job.next.id);if(t?.blocked==='文件同步待恢复'&&!other)this.store.put('task',t.id,{...t,blocked:null})}
+  });
  }
  finishJob(job){
   this.store.atomic(()=>{this.store.put('task',job.next.id,{...job.next,blocked:null});cancelStaleUploads(this.store,job.next);this.store.event(job.event.kind,job.event.actor,job.next.id,job.event.body);this.store.put('job',job.id,{...job,status:'done',error:null})});
@@ -140,6 +151,23 @@ class Nas{
   await this.ready();
   for(const p of [job.source,job.dest,job.backup])await guarded(this.config.taskRoot,path.relative(this.config.taskRoot,p));
   const backupExists=await exists(job.backup),destExists=await exists(job.dest);
+  if(['prepared','moving','restoring'].includes(job.phase)){
+   // These stages never published after.xlsx. A changed source is an external
+   // save, not a broken workflow transaction, and must not be replaced by it.
+   if(!backupExists){this.rollbackUnpublishedJob(job);return}
+   try{
+    const backupHash=await fileHash(job.backup);
+    if(job.phase==='restoring'&&job.recoveryHash!==backupHash)fail('恢复期间备份内容发生变化，已保留当前文件和备份');
+    const sourceExists=await exists(job.source),restored=job.phase==='restoring'&&sourceExists&&await fileHash(job.source)===backupHash;
+    if((job.dest!==job.source&&destExists)||(sourceExists&&!restored))fail('另一份保存已出现在原表或目标位置，未覆盖该文件；已保留原表备份供核对');
+    if(!restored){job.phase='restoring';job.recoveryHash=backupHash;this.store.put('job',job.id,job);await fsp.copyFile(job.backup,job.source,fs.constants.COPYFILE_EXCL)}
+    if(await fileHash(job.source)!==backupHash||await fileHash(job.backup)!==backupHash)fail('最新原表恢复校验未完成，已保留当前文件和备份');
+    await fsp.unlink(job.backup);this.rollbackUnpublishedJob(job);return;
+   }catch(e){
+    const t=this.store.get('task',job.next.id);if(t){if(!t.blocked)job.recoveryBlocked=true;this.store.put('job',job.id,job);this.store.put('task',t.id,{...t,blocked:'文件同步待恢复'})}
+    fail('需求表同步已暂停：'+e.message+'；备份：'+job.backup);
+   }
+  }
   if(destExists&&await fileHash(job.dest)===job.nextHash&&backupExists&&await fileHash(job.backup)===job.originalHash){this.finishJob(job);await this.cleanupBackup(job);return}
   if(backupExists&&await fileHash(job.backup)===job.originalHash&&!await exists(job.source)&&!destExists){await fsp.rename(job.backup,job.source);this.store.put('job',job.id,{...job,status:'rolled-back'});return}
   if(!backupExists&&await exists(job.source)&&await fileHash(job.source)===job.originalHash){this.store.put('job',job.id,{...job,status:'rolled-back'});return}

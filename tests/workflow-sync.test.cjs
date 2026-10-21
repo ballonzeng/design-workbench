@@ -84,11 +84,11 @@ test('editing contribution items updates points and does not block later workflo
  assert.equal(current().items[0].type,'simple');assert.equal(current().items[0].points,.15);assert.equal(current().workbookSyncIssue,null);
  await edit({H4:46268,I4:12});await client.rpc('sync-requirements');assert.equal(current().state,2);assert.equal(current().workbookSyncIssue,null);
 });
-test('duplicate originals and changed task identity are blocked with their status folder',async t=>{
+test('duplicate originals and changed product identity are blocked with their status folder',async t=>{
  const {client,current,file,taskRoot}=await setup(t),other=path.join(taskRoot,STAGES[2],filename);
  await fs.copyFile(file(),other);await client.rpc('sync-requirements');assert.match(current().workbookSyncIssue.message,/多个状态文件夹/);assert.equal(current().workbookSyncIssue.stage,STAGES[1]);
  await fs.unlink(other);await client.rpc('sync-requirements');assert.equal(current().workbookSyncIssue,null);
- const wb=unpack(await fs.readFile(file()));wb.entries[wb.status.file]=strToU8(wb.status.content.replace('6970855224163','6970855224164'));await fs.writeFile(file(),zipSync(wb.entries));
+ const wb=unpack(await fs.readFile(file()));wb.entries[wb.status.file]=strToU8(wb.status.content.replace('西红花','另一商品').replace('6970855224163','6970855224164'));await fs.writeFile(file(),zipSync(wb.entries));
  const oldHash=current().workbookHash;await client.rpc('sync-requirements');assert.equal(current().workbookHash,oldHash);assert.match(current().workbookSyncIssue.message,/69码/);
 });
 test('periodic checks refresh a saved original without a refresh button',async t=>{
