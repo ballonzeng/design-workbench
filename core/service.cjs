@@ -268,7 +268,7 @@ class Service extends EventEmitter{
     const code='DW1.'+Buffer.from(JSON.stringify({host:payload.host,port:this.port,cert:this.identity.cert,secret,personId:payload.personId})).toString('base64url');result={code,expires};
     }else if(command==='member-remove'){
     R.manager(actor);const person=R.PEOPLE.find(p=>p.id===payload.personId);if(!person||person.id===actor.personId||person.title!=='设计师')R.fail('不能移除此成员');
-    if(this.store.all('task').some(t=>t.owner===person.id&&t.state>0&&(t.state<4||!t.sealed)))R.fail('该成员还有未完成或待封存任务，请先改派或完成封存',409);
+    if(this.store.all('task').some(t=>t.owner===person.id&&t.state>0&&t.state<4))R.fail('该成员还有未完成任务，请先改派后再移除',409);
     if(this.store.all('upload').some(u=>u.actor===person.id&&(currentUpload(this.store.get('task',u.taskId),u)&&['uploading','publishing'].includes(u.status)||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/')))))R.fail('该成员还有上传待处理，请先处理完毕',409);
     this.store.atomic(()=>{this.store.put('removedMember',person.id,{at:Date.now(),by:actor.personId});for(const kind of ['token','pair'])for(const row of this.store.db.prepare('SELECT id,body FROM records WHERE kind=?').all(kind)){const v=JSON.parse(row.body);if(v.personId===person.id)this.store.put(kind,row.id,{...v,revoked:true,used:true})}this.store.event('member-removed',actor.personId,null,{personId:person.id,name:person.name})});
     for(const [id,stream] of this.streams)if(stream.actor.personId===person.id){this.streams.delete(id);stream.res.end()}result={removed:true};

@@ -37,6 +37,7 @@ const dateTime=t=>t?new Date(t).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'
 const timeText=ms=>{const minutes=Math.floor(Math.max(0,ms)/60000);return minutes<60?minutes+' 分钟':Math.floor(minutes/60)+' 小时 '+minutes%60+' 分钟'};
 const elapsed=t=>(t.elapsedMs||0)+(t.runningSince?Math.max(0,now()-t.runningSince):0);
 const taskIssue=t=>t?.workbookSyncIssue||t?.assetSyncIssue;
+const managerCanFinishArchive=t=>manager()&&t?.state===4&&!t.sealed&&(t.deliveries||[]).length>0&&data.people.some(p=>p.id===t.owner&&p.removed);
 const issueText=t=>{const issue=taskIssue(t);return issue?issue.stage+' · '+issue.message:''};
 function icons(){window.lucide?.createIcons({attrs:{'aria-hidden':'true'}})}
 function syncBadge(){if(!data.connection?.online){$('#nas-badge').innerHTML='<span class="status-dot"></span>离线 · 显示上次同步数据';return}const ok=data.nasStatus?.connected&&!data.workbookSync?.error;$('#nas-badge').innerHTML='<span class="status-dot '+(ok?'online':'')+'"></span>'+(data.nasStatus?.connected?(data.workbookSync?.error?'NAS 同步异常':data.workbookSync?.lastCheckedAt?'同步于 '+dateTime(data.workbookSync.lastCheckedAt):'NAS 已连接 · 待检查'):'NAS 待连接')}
@@ -100,6 +101,7 @@ function taskActions(t){
   if(t.state===0)actions='<div class="action-group"><select aria-label="为'+esc(taskName(t))+'选择设计师" data-assignee="'+t.id+'">'+data.people.filter(p=>!p.removed).map(p=>'<option value="'+p.id+'"'+(p.name===t.requestedDesigner?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>'+button('分配任务','assign',id,true,!connected())+'</div>';
   else if(t.state===3)actions=button('确认完成','approve-open',id,true,!connected());
   else actions='<span class="readonly">'+(t.state===4?(t.sealed?'已封存':'等待设计封存'):t.state===2?'设计师正在处理':'等待设计师开始')+'</span>';
+  if(managerCanFinishArchive(t))actions+=button(icon('archive')+'代为完成封存','manager-archive-open',id,true,!connected());
   if(t.state>0)actions+=button(icon('undo-2')+'回退','rollback-open',id,false,!connected());
   if(t.state>0&&t.state<4)actions+=button('改派','reassign-open',id,false,!connected());
  }else{
@@ -240,7 +242,7 @@ function closeSheet(){moveSheet(false);dialogContext=null}
 async function taskDetail(id){
  const t=data.tasks.find(t=>t.id===id);if(!t)return;
  if(!manager()&&t.assignmentId&&!t.readAt){try{await api('read',{taskId:id,assignmentId:t.assignmentId})}catch{}}
- openSheet(taskName(t),'<div class="task-detail-score"><span>标准贡献力</span><div class="point-display">'+fmt(points(t))+'<small>点</small></div></div><dl>'+[['任务状态',states[t.state]],['产品名',t.product],['品牌',t.brand],['产品69码',t.code],['运营',t.operator],['设计师',manager()?peopleName(t.owner):data.person?.name],['提出需求',dateTime(t.requestedAt)],['分配时间',dateTime(t.assignedAt)],['首次开始',dateTime(t.startedAt)],['提交待确认',dateTime(t.reviewAt)],['确认完成',dateTime(t.completedAt)],['完成封存',dateTime(t.sealedAt)],['最近更新',dateTime(t.updatedAt)],['实际设计耗时',timeText(elapsed(t))]].map(([k,v])=>'<div class="summary-line"><dt>'+k+'</dt><dd>'+esc(v)+'</dd></div>').join('')+'</dl><div style="margin-top:22px">'+t.items.map(i=>'<div class="item-row"><strong>'+esc(i.typeName)+' · '+fmt(i.points)+' 点</strong><p>'+i.qty+' '+esc(data.rates.find(r=>r.id===i.type)?.unit||'项')+(i.note?' · '+esc(i.note):'')+'</p></div>').join('')+'</div>'+ (t.importedTiming?'<div class="notice">这是从现有 NAS 导入的任务。导入前的准确耗时无法从表内小时字段还原；恢复计时后会继续准确记录。</div>':'')+'<div class="sheet-actions">'+button(icon('file-spreadsheet')+'查看需求表','open-requirement','data-task="'+id+'"',true,!connected())+(t.state===4&&(t.sealed||(t.deliveries||[]).length)?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+(manager()&&t.state===4&&t.sealed?button('恢复待封存','archive-reopen','data-task="'+id+'"'):'')+(manager()&&t.state===4?button('校准点数','calibration-open','data-task="'+id+'"',false,!connected()):'')+(manager()?button('检查重复记录','duplicate-inspect','data-task="'+id+'"'):'')+'</div><div id="history-region"></div>',{taskId:id},'TASK DETAILS');
+ openSheet(taskName(t),'<div class="task-detail-score"><span>标准贡献力</span><div class="point-display">'+fmt(points(t))+'<small>点</small></div></div><dl>'+[['任务状态',states[t.state]],['产品名',t.product],['品牌',t.brand],['产品69码',t.code],['运营',t.operator],['设计师',manager()?peopleName(t.owner):data.person?.name],['提出需求',dateTime(t.requestedAt)],['分配时间',dateTime(t.assignedAt)],['首次开始',dateTime(t.startedAt)],['提交待确认',dateTime(t.reviewAt)],['确认完成',dateTime(t.completedAt)],['完成封存',dateTime(t.sealedAt)],['最近更新',dateTime(t.updatedAt)],['实际设计耗时',timeText(elapsed(t))]].map(([k,v])=>'<div class="summary-line"><dt>'+k+'</dt><dd>'+esc(v)+'</dd></div>').join('')+'</dl><div style="margin-top:22px">'+t.items.map(i=>'<div class="item-row"><strong>'+esc(i.typeName)+' · '+fmt(i.points)+' 点</strong><p>'+i.qty+' '+esc(data.rates.find(r=>r.id===i.type)?.unit||'项')+(i.note?' · '+esc(i.note):'')+'</p></div>').join('')+'</div>'+ (t.importedTiming?'<div class="notice">这是从现有 NAS 导入的任务。导入前的准确耗时无法从表内小时字段还原；恢复计时后会继续准确记录。</div>':'')+'<div class="sheet-actions">'+button(icon('file-spreadsheet')+'查看需求表','open-requirement','data-task="'+id+'"',true,!connected())+(t.state===4&&(t.sealed||(t.deliveries||[]).length)?button(icon('folder-open')+'文件存放位置','task-asset-location','data-task="'+id+'"'):'')+(managerCanFinishArchive(t)?button('代为完成封存','manager-archive-open','data-task="'+id+'"',false,!connected()):'')+(manager()&&t.state===4&&t.sealed?button('恢复待封存','archive-reopen','data-task="'+id+'"'):'')+(manager()&&t.state===4?button('校准点数','calibration-open','data-task="'+id+'"',false,!connected()):'')+(manager()?button('检查重复记录','duplicate-inspect','data-task="'+id+'"'):'')+'</div><div id="history-region"></div>',{taskId:id},'TASK DETAILS');
  try{const history=await api('history',{taskId:id});if(dialogContext?.kind==='detail'&&dialogContext.taskId===id){const names={'contribution-calibrated':'负责人校准点数',rollback:'负责人回退环节',assign:'分配 / 改派任务',start:'开始设计',pause:'暂停设计',resume:'继续计时',review:'提交运营确认',rework:'收到修改，继续设计',approve:'记录运营聊天确认',sealed:'产物封存完成','archive-reopened':'负责人恢复待封存','asset-archived':'一类产物归档成功','asset-removed':'封存文件已删除，恢复待封存','contribution-standard-updated':'贡献力改为按单个成品计算','requirement-created':'上传需求','imported-existing':'导入原有需求','excel-synced':'NAS 原表同步'};$('#history-region').innerHTML='<ul class="history-list">'+history.slice(0,8).map(e=>'<li>'+esc(names[e.kind]||e.kind)+'<time>'+dateTime(e.at)+'</time></li>').join('')+'</ul>'}}catch{}
 }
 async function pairPerson(id){
@@ -265,6 +267,11 @@ async function pickDraft(){
  dialogContext={draft};
  $('#draft-summary').innerHTML='<div class="file-summary" style="margin-top:20px"><b>'+esc(draft.filename)+'</b><br>'+draft.items.length+' 个事项 · '+fmt(draft.items.reduce((sum,i)=>sum+i.points,0))+' 点</div>';
  $('#sheet [data-command="import-submit"]').disabled=false;$('#sheet-error').hidden=true;
+}
+function managerArchiveSheet(id){
+ const t=data.tasks.find(task=>task.id===id);if(!managerCanFinishArchive(t)){toast('仅可代为完成已移出成员的已上传、待封存任务',true);return}
+ const uploaded=t.deliveries.map(d=>'<div class="item-row"><strong>'+esc(d.categoryName||data.categories.find(c=>c.id===d.category)?.name||d.category)+'</strong><p>'+esc(d.path||'')+'</p></div>').join('');
+ openSheet('代为完成封存','<p class="description">'+esc(taskName(t))+' · '+esc(t.brand)+' · '+esc(t.code)+'</p><dl><div class="summary-line"><dt>原设计师</dt><dd>'+esc(peopleName(t.owner))+' · 已移出成员</dd></div></dl><h3>已上传类别</h3>'+uploaded+'<div class="notice">沿用以上已上传的产物，无需重复上传。任务、产物及贡献点数仍归属原设计师，本次由负责人确认并记录封存操作。</div><p class="description">请先核对已上传内容为本任务的完整交付，再确认完成封存。</p><div class="sheet-actions">'+button('取消','close-sheet')+button('查看文件存放位置','task-asset-location','data-task="'+esc(t.id)+'"')+button('确认代为完成封存','manager-archive-confirm','data-task="'+esc(t.id)+'"',true,!connected())+'</div>',{taskId:t.id,kind:'manager-archive',managerArchiveVersion:t.version},'COMPLETE ARCHIVE');
 }
 function sealSheet(id){
  if(uploadJob?.status==='running'){drawUpload();toast('已有产物正在后台上传，可在右下角查看进度');return}
@@ -411,6 +418,7 @@ document.addEventListener('click',async e=>{
  if(command==='report-open'){reportSheet(el.dataset.frequency);return}
  if(command==='product-group-open'){productGroupSheet(el.dataset.group);return}
  if(command==='seal-open'){sealSheet(el.dataset.task);return}
+ if(command==='manager-archive-open'){managerArchiveSheet(el.dataset.task);return}
  if(command==='re-pair'){data.requiresPairing=true;render();return}
  if(command==='rollback-open'){
   const target=t.sealed?'待封存':states[t.state-1],description=t.sealed?'撤销完成封存标记，保留已上传文件，可以继续补传。':t.state===4?'撤销运营确认、评分及当前封存关联，原交付文件保留为历史。若需要设计师修改，再回退一次到设计中。':t.state===3?'清除本次提交时间、确认和评分，恢复设计计时。设计师修改后重新提交，运营重新确认。':t.state===2?'停止计时，清除本次开始、提交和确认时间；累计设计耗时保留，设计师可重新开始。':'撤销分配和后续环节记录，需求回到待分配。';
@@ -470,7 +478,7 @@ document.addEventListener('click',async e=>{
   else if(command==='reassign-confirm')await taskAction(t,'assign',{owner:$('#reassign-person').value});
   else if(command==='approve-confirm')await taskAction(t,'approve',{chatConfirmed:$('#chat-confirmed').checked});
   else if(command==='copy-code'){await api('copy',{text:dialogContext.code});toast('连接码已复制')}
-  else if(command==='member-remove'){const p=data.people.find(p=>p.id===el.dataset.person);openSheet('移出 '+p.name,'<p class="description">移出后，该成员所有设备和旧连接码都会失效，不再显示于人员看板和分配名单。历史任务和资产保留。</p><div class="sheet-actions">'+button('取消','close-sheet')+button('确认移出','member-remove-confirm','data-person="'+p.id+'"',true)+'</div>',{personId:p.id},'REMOVE MEMBER')}
+  else if(command==='member-remove'){const p=data.people.find(p=>p.id===el.dataset.person);openSheet('移出 '+p.name,'<p class="description">移出后，该成员所有设备和旧连接码都会失效，不再显示于人员看板和分配名单。</p><div class="notice">进行中的任务须先改派给其他成员。已完结但待封存的任务会保留，不会自动标记为已封存；历史任务、产物和贡献归属均保留。</div><div class="sheet-actions">'+button('取消','close-sheet')+button('确认移出','member-remove-confirm','data-person="'+p.id+'"',true)+'</div>',{personId:p.id},'REMOVE MEMBER')}
   else if(command==='member-remove-confirm'){await api('member-remove',{personId:el.dataset.person});closeSheet();accept(await api('snapshot'));toast('已移出成员，所有旧连接已停用')}
   else if(command==='manager-connect'){const code=$('#manager-connection-code').value.trim();managerConnectionStatus='正在连接主机并验证管理权限，请稍候…';$('#manager-connect-status').textContent=managerConnectionStatus;try{const snapshot=await api('manager-connect',{code});managerConnectionStatus='已切换为管理连接端';accept(snapshot);toast('已连接负责人主机')}catch(e){managerConnectionStatus='连接未完成：'+e.message;const status=$('#manager-connect-status');if(status)status.textContent=managerConnectionStatus;throw e}}
   else if(command==='manager-code'){const r=await api('manager-pair-code',{host:$('#manager-host').value});openSheet('管理连接码','<p class="description">此码授予任务管理权限，一次有效，一小时内使用。请仅交给需要管理权限的人。</p><textarea class="connection-code" readonly>'+esc(r.code)+'</textarea>',{},'MANAGEMENT CONNECTION')}
@@ -496,6 +504,7 @@ document.addEventListener('click',async e=>{
   }
   else if(command==='archive-reopen-confirm'){await api('archive-reopen',{taskId:t.id,version:dialogContext.reopenVersion});closeSheet();accept(await api('snapshot'));toast('已恢复待封存，设计师可以继续补传')}
   else if(command==='archive-finish'){await api('archive-finish',{taskId:t.id,version:t.version});closeSheet();accept(await api('snapshot'));toast('全部产物已完成封存')}
+  else if(command==='manager-archive-confirm'){if(!managerCanFinishArchive(t)||dialogContext?.kind!=='manager-archive'||dialogContext.taskId!==t.id)throw Error('任务状态已变化，请刷新后重新核对');await api('archive-finish',{taskId:t.id,version:dialogContext.managerArchiveVersion});closeSheet();accept(await api('snapshot'));toast('已代为完成封存，原设计师贡献归属已保留')}
   else if(command==='open-requirement'){if(data.workbookSyncVersion!==1)throw Error('请先将负责人端更新至 0.2.4，再打开可同步的 NAS 原表');await api('open-requirement',{taskId:el.dataset.task});toast(t?.state===4?'已打开原表；修改事项后请保存并关闭 Excel，再由负责人点击“校准点数”':'已打开 NAS 原表；修改后请保存并关闭 Excel，自动同步流转')}
   else if(command==='task-asset-location'){await api('task-asset-location',{taskId:el.dataset.task});toast('已打开该产品的封存目录')}
   else if(command==='open-asset')await api('open-asset',{assetId:el.dataset.asset});

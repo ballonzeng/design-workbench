@@ -266,7 +266,10 @@ class Assets{
   }catch(e){u.error=e.message;this.store.put('upload',u.id,u);throw e}
  }
  async finish(taskId,actor,version){
-  const task=this.store.get('task',taskId);if(!task)fail('任务不存在',404);own(actor,task);
+  const task=this.store.get('task',taskId);if(!task)fail('任务不存在',404);
+  const assisted=actor.role==='manager'&&!!this.store.get('removedMember',task.owner);
+  if(actor.role==='designer')own(actor,task);
+  else if(!assisted)fail('仅任务设计师或代已离职成员核对产物的负责人可以完成封存',403);
   if(task.blocked)fail('任务存在未恢复的文件同步，请先恢复后重试',409);
   if(task.state!==4)fail('任务尚不能完成封存',409);
   if(task.sealed){
@@ -293,7 +296,7 @@ class Assets{
   if(task.workbookSyncIssue)fail('请先由负责人刷新已完结任务并处理原表异常：'+task.workbookSyncIssue.message,409);
   await this.nas.readTask(task);
   const next=structuredClone(task);next.sealed=true;next.sealedAt=Date.now();next.sealedFromVersion=version;next.updatedAt=next.sealedAt;next.version++;
-  this.store.atomic(()=>{this.store.put('task',next.id,next);this.store.event('sealed',actor.personId,next.id,{categories:next.deliveries.map(d=>d.category)})});return next;
+  this.store.atomic(()=>{this.store.put('task',next.id,next);this.store.event('sealed',actor.personId,next.id,{categories:next.deliveries.map(d=>d.category),...(assisted?{assistedFor:task.owner}:{})})});return next;
  }
  async finalize(u,task){
   const item=task.items.find(i=>i.id===u.itemId);
