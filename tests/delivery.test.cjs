@@ -106,7 +106,10 @@ test('paired HTTPS transfer commits a complete project tree into split asset fol
   await client.rpc('archive-commit',{uploadId:batch.id});assert.equal(syncCount,1);
   const other={...t,id:crypto.randomUUID()};service.store.put('task',other.id,other);
   assert.ok((await client.rpc('archive-prepare',{...payload,taskId:other.id})).id);
-  const changed={...payload,taskId:crypto.randomUUID(),files:payload.files.map((f,i)=>i===0?{...f,sha256:'a'.repeat(64)}:f)};service.store.put('task',changed.taskId,{...t,id:changed.taskId});await assert.rejects(client.rpc('archive-prepare',changed),/同名/);
+  const changed={...payload,taskId:crypto.randomUUID(),files:payload.files.map((f,i)=>i===0?{...f,sha256:'a'.repeat(64)}:f)};service.store.put('task',changed.taskId,{...t,id:changed.taskId});
+  const separate=await client.rpc('archive-prepare',changed),separateUpload=service.store.get('upload',separate.id);
+  assert.equal(separateUpload.storageLayout,2);assert.notEqual(separateUpload.category.path,category);assert.ok(separateUpload.category.path.includes(changed.taskId));
+  for(const f of selected.files)assert.equal(await fileHash(path.join(f.kind==='source'?source:output,...f.relativePath.split('/'))),await fileHash(f.file));
  }finally{client?.close();await service.stop()}
 });
 test('one completed task accepts separate folder-named asset types before final sealing',async()=>{

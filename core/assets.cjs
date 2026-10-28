@@ -7,6 +7,7 @@ const {nameDelivery}=require('./naming.cjs');
 const {automaticNames}=require('./automatic-names.cjs');const {imageWidth}=require('./image-metadata.cjs');
 const {archiveIdentity,currentUpload}=require('./archive-state.cjs');
 const manifestIdentity=({files,delivery})=>digest(JSON.stringify(delivery?{files,delivery}:files));
+function checkStorageLayout(upload){if(upload.storageLayout!==undefined&&upload.storageLayout!==2)fail('上传记录的存储布局版本不支持，请更新负责人端',409)}
 const SOURCE_EXT=new Set(['.psd','.psb','.ai','.cdr','.afdesign','.c4d','.blend','.aep','.prproj','.fig','.zip']);
 const IMAGE_EXT=new Set(['.jpg','.jpeg','.png','.gif','.webp','.tif','.tiff']);
 function hasCategoryAssets(task,category,exceptId=null){
@@ -117,6 +118,7 @@ class Assets{
  checkUpload(u,task,actor){
   if(!u||u.actor!==actor.personId)fail('没有此封存权限',403);
   if(!task)fail('任务不存在',404);own(actor,task);
+  checkStorageLayout(u);
   if(!currentUpload(task,u))fail('这是回退前的上传记录，请重新选择产物',409);
   if(!['uploading','publishing','done'].includes(u.status))fail('上传已取消或被新文件替代，请重新选择产物',409);
   if(u.taskIdentity&&u.taskIdentity!==archiveIdentity(task))fail('任务确认或需求内容已变化，请重新选择产物',409);
@@ -168,6 +170,35 @@ class Assets{
   const folder='返工-'+task.id+'-'+task.archiveRound;
   return {...category,source:path.join(category.source,folder),output:path.join(category.output,folder)};
  }
+ categoryShape(category){
+  if(!category||['path','source','output'].some(k=>typeof category[k]!=='string'||!path.isAbsolute(category[k])))fail('上传记录的资产目录不完整，请重新选择文件',409);
+  const source=path.relative(category.path,category.source),output=path.relative(category.path,category.output);
+  if(source===''&&output==='')return 'flat';
+  if(source==='01.源文件'&&output==='02.导出图片')return 'split';
+  fail('上传记录的源文件或产物目录不符合固定布局，未改动原产物',409);
+ }
+ taskCategory(category,task,shape=this.categoryShape(category)){
+  const round=task.archiveRound||0;if(!Number.isSafeInteger(round)||round<0)fail('任务返工轮次无效',409);
+  const folder=safeName('任务-'+safeName(task.id,'任务编号'),'任务目录');
+  const root=path.join(category.path,folder,...(round?['返工-'+round]:[]));
+  return {...category,path:root,source:shape==='split'?path.join(root,'01.源文件'):root,output:shape==='split'?path.join(root,'02.导出图片'):root};
+ }
+ async resolveUploadCategory(u,task,product,item,splitDelivery,{create=true,freezeLegacyFlat=false}={}){
+  if(product.path!==u.product.path)fail('资产目录发生变化，请重新选择文件',409);
+  if(u.storageLayout===2){
+   if(u.taskId!==task.id||(u.archiveRound||0)!==(task.archiveRound||0))fail('上传记录与任务或返工轮次不一致，请重新选择产物',409);
+   const base=await this.nas.categoryDirectory(product,item,create,'flat'),expected=this.taskCategory(base,task,this.categoryShape(u.category));
+   if(['path','source','output'].some(k=>u.category[k]!==expected[k]))fail('任务资产目录发生变化，未改动原产物，请重新选择文件',409);
+   // Prepare fixes both the task directory and flat/split layout. New sibling
+   // directories must never redirect an already prepared or publishing batch.
+   return u.category;
+  }
+  if(u.storageLayout!==undefined)fail('上传记录的存储布局版本不支持，请更新负责人端',409);
+  const resolved=this.revisionCategory(await this.nas.categoryDirectory(product,item,create,splitDelivery),task);
+  const category=freezeLegacyFlat?{...resolved,source:u.category.source,output:u.category.output}:resolved;
+  if(category.path!==u.category.path)fail('资产目录发生变化，请重新选择文件',409);
+  return category;
+ }
  async prepare(task,itemId,actor,payload){
   own(actor,task);if(task.state!==4)fail('运营确认完结后才能上传产物',409);
   if(task.blocked)fail('任务存在未恢复的文件同步，请先恢复后重试',409);
@@ -177,14 +208,18 @@ class Assets{
   const manifestHash=manifestIdentity({files,delivery});
   const previous=this.store.all('upload').find(u=>currentUpload(task,u)&&u.itemId===(modern?null:itemId)&&u.actor===actor.personId&&['uploading','publishing','done'].includes(u.status)&&(!u.taskIdentity||u.taskIdentity===archiveIdentity(task))&&manifestIdentity(u)===manifestHash);
   if(hasCategoryAssets(task,spec.category,previous?.id))fail((spec.categoryName||'该类别')+'已经归档，请勿重复上传',409);
-  if(previous){this.checkUpload(previous,task,actor);await this.nas.ready();return this.refreshReceived(previous)}
+  if(previous){
+   this.checkUpload(previous,task,actor);await this.nas.ready();
+   if(previous.storageLayout===2){const assetItem=modern?{...item,category:spec.category}:item,product=await this.nas.productDirectory(assetItem);await this.resolveUploadCategory(previous,task,product,assetItem,!!previous.delivery,{create:false,freezeLegacyFlat:!previous.delivery})}
+   return this.refreshReceived(previous);
+  }
   if(task.sealed||!modern&&item.sealed)fail('任务已经封存',409);
   const assetItem=modern?{...item,category:spec.category}:item;
-   await this.nas.ready();const productResolution=this.products?await this.products.confirm(assetItem,payload.productDecision):null,product=await this.nas.productDirectory(assetItem),category=this.revisionCategory(await this.nas.categoryDirectory(product,assetItem,false,[2,3].includes(delivery?.namingVersion)?'flat':!!delivery),task);
+   await this.nas.ready();const productResolution=this.products?await this.products.confirm(assetItem,payload.productDecision):null,product=await this.nas.productDirectory(assetItem),category=this.taskCategory(await this.nas.categoryDirectory(product,assetItem,false,[2,3].includes(delivery?.namingVersion)?'flat':!!delivery),task);
   for(const u of this.store.all('upload'))if(currentUpload(task,u)&&uploadCategory(task,u)===spec.category&&u.status==='publishing')fail('上次封存正在恢复，请使用同一批文件重试');
   for(const f of files){const target=path.join(f.kind==='source'?category.source:category.output,f.relative);await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,target));if(await exists(target)&&await fileHash(target)!==f.sha256)fail('正式库存在同名但内容不同的文件，请确认新版本名称后上传：'+f.name)}
   const id=crypto.randomUUID(),stage=await ensureDir(this.nas.config.assetRoot,'_workbench-staging',id);
-   const record={id,archiveRound:task.archiveRound||0,taskIdentity:archiveIdentity(task),taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
+   const record={id,storageLayout:2,archiveRound:task.archiveRound||0,taskIdentity:archiveIdentity(task),taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
   const replaced=this.store.all('upload').filter(u=>u.taskId===task.id&&u.actor===actor.personId&&uploadCategory(task,u)===spec.category&&u.status==='uploading');
   if(replaced.some(u=>this.busy.has(u.id)||[...this.inflight].some(key=>key.startsWith(u.id+'/'))))fail('该类别仍有文件正在传输或处理，请等待结束后再更换文件');
   this.store.atomic(()=>{for(const u of replaced)this.store.put('upload',u.id,{...u,status:'cancelled',replacedBy:id,error:'已由重新选择的文件替代'});this.store.put('upload',id,record)});return record;
@@ -230,10 +265,9 @@ class Assets{
   if(task.state!==4||task.sealed||!item||item.sealed||u.status==='done')fail('任务状态已改变',409);
   if(u.files.some(f=>!u.received[f.id]))fail('还有文件尚未上传完整');
   await this.nas.ready();
-  const product=await this.nas.productDirectory(item,true),resolvedCategory=this.revisionCategory(await this.nas.categoryDirectory(product,item,true,!!u.delivery),task);
+  const product=await this.nas.productDirectory(item,true);
   // An older client may be resuming a flat upload after split folders were added.
-  const category=u.delivery?resolvedCategory:{...resolvedCategory,source:u.category.source,output:u.category.output};
-  if(product.path!==u.product.path||category.path!==u.category.path)fail('资产目录发生变化，请重新选择文件');
+  const category=await this.resolveUploadCategory(u,task,product,item,!!u.delivery,{freezeLegacyFlat:!u.delivery});
   const plan=await this.publicationPlan(u,category);u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
   try{
    await this.publishFiles(u,category,plan);
@@ -251,8 +285,7 @@ class Assets{
   if(task.deliveries?.some(d=>d.category===u.spec.category))fail(u.spec.categoryName+'已经归档，请勿重复上传',409);
   if(u.files.some(f=>!u.received[f.id]))fail('还有文件尚未上传完整');
   await this.nas.ready();const item={...task.items[0],category:u.spec.category};
-  const product=await this.nas.productDirectory(item,true),category=this.revisionCategory(await this.nas.categoryDirectory(product,item,true,[2,3].includes(u.delivery?.namingVersion)?'flat':true),task);
-  if(product.path!==u.product.path||category.path!==u.category.path)fail('资产目录发生变化，请重新选择文件');
+  const product=await this.nas.productDirectory(item,true),category=await this.resolveUploadCategory(u,task,product,item,[2,3].includes(u.delivery?.namingVersion)?'flat':true);
   const plan=await this.publicationPlan(u,category);
   if([3,4].includes(u.delivery?.namingVersion)&&u.spec.category==='main')for(const {file:f,source} of plan.filter(p=>p.file.kind==='output')){if(await imageWidth(source)!==f.width)fail('图片实际宽度与预览不一致，请重新选择：'+f.name)}
   u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
@@ -299,6 +332,7 @@ class Assets{
   this.store.atomic(()=>{this.store.put('task',next.id,next);this.store.event('sealed',actor.personId,next.id,{categories:next.deliveries.map(d=>d.category),...(assisted?{assistedFor:task.owner}:{})})});return next;
  }
  async finalize(u,task){
+  checkStorageLayout(u);
   const item=task.items.find(i=>i.id===u.itemId);
   if(!item?.sealed||item.assetId!==u.id)fail('封存记录尚未提交');
   const index={id:u.id,taskId:task.id,itemId:item.id,itemIds:u.itemIds||[item.id],code:item.code,product:u.product.name,brand:u.product.brand||item.brand,author:u.actor,path:item.assetPath,at:item.sealedAt,delivery:u.delivery,files:u.files.map(f=>({...f,path:u.published[f.id]}))};
@@ -314,6 +348,7 @@ class Assets{
   this.store.put('upload',u.id,u);
  }
  async finalizeDelivery(u,task,delivery){
+  checkStorageLayout(u);
   if(!(task.deliveries||[]).some(d=>d.id===u.id))fail('归档记录尚未提交');
   const item=task.items[0],index={id:u.id,taskId:task.id,itemId:null,itemIds:[],code:item.code,product:u.product.name,brand:u.product.brand||item.brand,author:u.actor,path:delivery.path,at:delivery.at,category:delivery.category,delivery:u.delivery,files:u.files.map(f=>({...f,path:u.published[f.id]}))};
   u={...u,status:'done',completedAt:delivery.at,error:null};this.store.atomic(()=>{this.store.put('asset',u.id,index);this.store.put('upload',u.id,u)});

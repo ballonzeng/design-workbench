@@ -28,7 +28,8 @@ namespace Workbench {
   }
   public static void RenameOwner(FileStream stream,string destination) {
    byte[] name=Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
-   int offset=Marshal.OffsetOf(typeof(RenameInfo),"Name").ToInt32(),size=checked(offset+name.Length);
+   // Absolute-path conversion also reads a UTF-16 terminator; Length excludes it.
+   int offset=Marshal.OffsetOf(typeof(RenameInfo),"Name").ToInt32(),size=checked(offset+name.Length+2);
    IntPtr buffer=Marshal.AllocHGlobal(size);
    try {
     Marshal.Copy(new byte[size],0,buffer,size);

@@ -27,6 +27,16 @@ test('stale Excel owner moves with both native handles held and preserves workbo
  assert.deepEqual(await fs.readFile(f.file),f.bytes);assert.equal((await fs.stat(f.file)).mtimeMs,originalStat.mtimeMs);await assert.rejects(fs.stat(f.owner),{code:'ENOENT'});assert.deepEqual(await fs.readFile(r.recoveryPath),f.ownerBytes);
  const manifest=JSON.parse(await fs.readFile(path.join(path.dirname(r.recoveryPath),'manifest.json'),'utf8'));assert.equal(manifest.status,'recovered');assert.equal(manifest.source,f.owner);assert.equal(manifest.workbook,f.file);assert.equal(manifest.size,f.ownerBytes.length);assert.equal(manifest.sha256,digest(f.ownerBytes));assert.equal(manifest.workbookSha256,digest(f.bytes));assert.ok(Number.isFinite(Date.parse(manifest.at)));
 });
+test('short and long Unicode owner names recover at the exact recorded path without trailing native bytes',{skip:!windows},async t=>{
+ for(const filename of ['短.xlsx','26101211-CON-'+ '减肥双仓主图'.repeat(6)+'-王武臣-洪华.xlsx']){
+  const f=await fixture(t),file=path.join(path.dirname(f.file),filename),owner=path.join(path.dirname(f.owner),'~$'+filename);
+  await fs.rename(f.file,file);await fs.rename(f.owner,owner);f.file=file;f.owner=owner;
+  const originalStat=await fs.stat(file),r=await probe(f);assert.equal(r.locked,false);assert.equal(r.recovered,true);assert.equal(r.reason,'stale-owner-recovered');
+  assert.equal(path.basename(r.recoveryPath),'~$'+filename);assert.deepEqual((await fs.readdir(path.dirname(r.recoveryPath))).sort(),['manifest.json','~$'+filename].sort());
+  assert.deepEqual(await fs.readFile(r.recoveryPath),f.ownerBytes);await assert.rejects(fs.stat(owner),{code:'ENOENT'});assert.deepEqual(await fs.readFile(file),f.bytes);assert.equal((await fs.stat(file)).mtimeMs,originalStat.mtimeMs);
+  const manifest=JSON.parse(await fs.readFile(path.join(path.dirname(r.recoveryPath),'manifest.json'),'utf8'));assert.equal(manifest.status,'recovered');assert.equal(manifest.source,owner);assert.equal(manifest.workbook,file);assert.equal(manifest.recoveryPath,r.recoveryPath);assert.equal(manifest.size,f.ownerBytes.length);assert.equal(manifest.sha256,digest(f.ownerBytes));assert.equal(manifest.workbookSha256,digest(f.bytes));
+ }
+});
 test('a currently open workbook blocks stale-owner recovery even when its existing handle shares read write and delete',{skip:!windows},async t=>{
  const f=await fixture(t);await hold(t,f.file);const r=await probe(f);assert.equal(r.locked,true);assert.equal(r.reason,'busy');assert.equal(r.recovered,false);assert.deepEqual(await fs.readFile(f.owner),f.ownerBytes);assert.deepEqual(await fs.readFile(f.file),f.bytes);
 });
