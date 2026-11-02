@@ -34,7 +34,7 @@ async function audit(label){
   assert.equal(metrics.controls.top,0,label+' window controls top');assert(metrics.controls.right<=metrics.width+1,label+' controls right');
   if(metrics.dialog){assert(metrics.dialog.top>=42&&metrics.dialog.bottom<=metrics.height+1,label+' dialog bounds');assert(metrics.dialog.scroll<=metrics.dialog.width+1,label+' dialog body overflow')}
   results.push({check:label,...metrics});
-  if(['exclude-dialog','excluded-tasks'].includes(label)&&width!==1024)fs.writeFileSync(path.join(out,label+'-'+width+'.png'),(await win.capturePage()).toPNG());
+  if(['exclude-dialog','excluded-tasks','selected-person-return','zero-person-return'].includes(label)&&width!==1024)fs.writeFileSync(path.join(out,label+'-'+width+'.png'),(await win.capturePage()).toPNG());
  }
  win.setSize(1360,900);await wait(100);fs.writeFileSync(path.join(out,label+'.png'),(await win.capturePage()).toPNG());
 }
@@ -95,8 +95,38 @@ app.whenReady().then(async()=>{
  assert.equal(await evaluate(`document.querySelector('.review-metric:nth-child(2) strong').textContent`),'10.4','removed member points leaked into total');
  assert.equal(service.store.get('task','removed-task').items[0].points,999,'excluding removed members must preserve original task');
  results.push({check:'removed members excluded from options, tasks and totals'});
- await select('#review-person','chang');await rows(['prev-pending'],'active member history');
- await select('#review-person','');await select('#review-state','sealed');await rows(['prev-sealed'],'current sealed filter');
+ await click('.review-person-card[data-person="chang"]');await rows(['prev-pending'],'member summary opens individual history');
+ assert.equal(await evaluate(`document.querySelector('#review-person').value`),'chang');
+ assert(await evaluate(`!!document.querySelector('[data-command="review-person-all"]')`),'member view must provide a return to all people');
+ assert.equal(await evaluate(`document.querySelector('.review-person-card[data-person="chang"]').getAttribute('aria-pressed')`),'true','selected person card must expose its selection');
+ await evaluate(`document.querySelector('[data-command="review-person-all"]').closest('.section-heading').scrollIntoView({block:'start',behavior:'instant'})`);await audit('selected-person-return');
+ await click('[data-command="review-person-all"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'return all people from member summary');
+ assert.equal(await evaluate(`document.querySelector('#review-person').value`),'','return button must clear personnel dropdown');
+ await click('.review-person-card[data-person="chang"]');await rows(['prev-pending'],'select same member again');
+ await click('.review-person-card[data-person="chang"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'selected member card toggles all people');
+ // Returning all people must preserve custom dates, event basis, status and keyword.
+ await click('[data-command="review-period"][data-period="custom"]');
+ await select('#review-basis','requested');await select('#review-state','unsealed');
+ await evaluate(`(()=>{const e=document.querySelector('#review-search');e.value='上月';e.dispatchEvent(new InputEvent('input',{bubbles:true}))})()`);
+ await rows(['prev-pending','prev-estimated'],'combined custom date basis state and keyword');
+ await click('.review-person-card[data-person="chang"]');await rows(['prev-pending'],'member under combined filters');
+ await click('[data-command="review-person-all"]');await rows(['prev-pending','prev-estimated'],'return all people preserves combined filters');
+ assert.equal(await evaluate(`document.querySelector('#review-person').value`),'');
+ assert.deepEqual(queries.at(-1),{frequency:'custom',anchor:dayKey(local(-1)),start:dayKey(local(-1)),end:dayKey(local(0,1,0)-1),basis:'requested',personId:'',state:'unsealed',query:'上月'},'return all people reset unrelated custom filters');
+ results.push({check:'return all people preserves custom date range, basis, status and search'});
+ // A selected member with zero matches must still have an escape back to all personnel.
+ await evaluate(`(()=>{const e=document.querySelector('#review-search');e.value='';e.dispatchEvent(new InputEvent('input',{bubbles:true}))})()`);
+ await select('#review-basis','completed');await select('#review-state','sealed');
+ await click('[data-command="review-period"][data-period="week"]');await calendar('review-anchor',dayKey(local(-1,5)));
+ await rows(['prev-sealed'],'weekly sealed task for other personnel');
+ await select('#review-person','chang');await rows([],'selected member zero matches');
+ assert(await evaluate(`!!document.querySelector('[data-command="review-person-all"]')`),'zero-match member view must retain return button');
+ await evaluate(`document.querySelector('[data-command="review-person-all"]').closest('.section-heading').scrollIntoView({block:'start',behavior:'instant'})`);await audit('zero-person-return');
+ const zeroFilter=queries.at(-1);await click('[data-command="review-person-all"]');await rows(['prev-sealed'],'zero match returns other personnel');
+ assert.deepEqual(queries.at(-1),{...zeroFilter,personId:''},'zero-match return cleared more than personnel');
+ results.push({check:'return all people remains available with zero results and preserves weekly filters'});
+ await select('#review-state','all');await click('[data-command="review-preset"][data-preset="previous"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'reset after personnel-return checks');
+ await select('#review-state','sealed');await rows(['prev-sealed'],'current sealed filter');
  await select('#review-state','unsealed');await rows(['prev-pending','prev-estimated'],'current pending archive filter');
  await select('#review-state','all');await select('#review-basis','requested');
  await rows(['prev-sealed','prev-pending','prev-estimated','cross-month','missing-date'],'requested date includes cross-month work');

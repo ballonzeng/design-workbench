@@ -324,3 +324,5 @@ dialog.date-picker{max-height:calc(100dvh - 70px);transform:none!important;anima
 @media(max-width:1250px){.review-filter-grid{grid-template-columns:minmax(230px,1.4fr) minmax(150px,1fr)}.review-people{grid-template-columns:repeat(2,minmax(0,1fr))}.review-metric{padding:18px 16px}.review-metric p{font-size:13px}}
 @media(max-width:940px){.review-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.task-review .page-heading{align-items:flex-start;gap:16px;flex-wrap:wrap}.task-review .heading-actions{flex-wrap:wrap}.review-filters{padding:18px}.review-period-row{gap:12px}.review-period-row .segment{padding:8px 12px}}
 @media(max-width:660px){.review-filter-grid{grid-template-columns:minmax(0,1fr)}.review-people{grid-template-columns:minmax(0,1fr)}.review-period-row .segmented{width:100%}.review-period-row .segment{flex:1}.review-results-status{font-size:13px}.review-quality summary::after{margin-left:0}}
+
+.review-person-card[aria-pressed="true"]{border-color:#9eb8e2;background:var(--blue-soft)}.review-person-card[aria-pressed="true"]>svg{color:var(--blue)}
