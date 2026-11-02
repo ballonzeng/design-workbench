@@ -212,7 +212,29 @@ class Service extends EventEmitter{
    R.manager(actor);if(typeof payload.month!=='string'||!W.validDate(payload.month+'-01'))R.fail('请选择生效月份');
    const policy=W.validatePolicy(payload.policy);return this.store.exclusive(()=>{const revision=this.store.get('setting','workPolicyRevision')||0;if(payload.revision!==revision)R.fail('工作日规则已更新，请重新打开后修改',409);const policies=this.store.get('setting','workPolicies')||{};this.store.atomic(()=>{policies[payload.month]=policy;this.store.put('setting','workPolicies',policies);this.store.put('setting','workPolicyRevision',revision+1);this.store.event('work-policy-updated',actor.personId,null,{month:payload.month,policy,revision:revision+1})});this.broadcast();return {saved:true,revision:revision+1}});
   }
-  if(command==='task-review'){R.manager(actor);return require('./task-review.cjs').queryTaskReview(this.store.all('task'),R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),payload)}
+  if(command==='task-review'){R.manager(actor);return require('./task-review.cjs').queryTaskReview(this.store.all('task'),R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),payload,Date.now(),this.store.all('reviewExclusion'))}
+  if(command==='task-review-exclude'||command==='task-review-restore'){
+   R.manager(actor);
+   const {queryTaskReview,reviewRange,reviewExclusionKey}=require('./task-review.cjs'),range=reviewRange(payload),taskId=payload.taskId;
+   if(typeof taskId!=='string'||!taskId||taskId.length>200||taskId!==taskId.trim())R.fail('任务编号无效');
+   if(command==='task-review-exclude'&&payload.reason!==undefined&&(typeof payload.reason!=='string'||payload.reason.trim().length>300))R.fail('排除原因最多 300 个字符');
+   const reason=command==='task-review-exclude'?(payload.reason||'').trim():'',key=reviewExclusionKey(range,taskId);
+   return this.store.exclusive(()=>{
+    if(actor.tokenHash&&this.store.get('token',actor.tokenHash)?.revoked)R.fail('连接已失效',401);
+    const existing=this.store.get('reviewExclusion',key);
+    if(command==='task-review-restore'){
+     if(existing)this.store.atomic(()=>{this.store.remove('reviewExclusion',key);this.store.event('task-review-restored',actor.personId,taskId,{startDate:range.startDate,endDate:range.endDate,previous:existing})});
+     if(existing)this.broadcast();return {restored:true,changed:!!existing,range};
+    }
+    if(existing)return {excluded:true,changed:false,range,exclusion:existing};
+    const task=this.store.get('task',taskId);if(!task)R.fail('任务不存在',404);
+    const people=R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),matches=queryTaskReview([task],people,{frequency:'custom',start:range.startDate,end:range.endDate,basis:payload.basis});
+    if(!matches.tasks.length)R.fail('任务不在所选日期范围内，或该成员已移出组织，请刷新后重试',409);
+    const exclusion={taskId,startDate:range.startDate,endDate:range.endDate,reason,at:Date.now(),by:actor.personId};
+    this.store.atomic(()=>{this.store.put('reviewExclusion',key,exclusion);this.store.event('task-review-excluded',actor.personId,taskId,exclusion)});this.broadcast();
+    return {excluded:true,changed:true,range,exclusion};
+   });
+  }
   if(command==='report-data'){R.manager(actor);const {periodRange}=require('./report.cjs'),range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));return {tasks:history.tasks,events:this.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),generatedAt,unavailable:history.unavailable,workPolicies:this.store.get('setting','workPolicies')||{},removedPeople:this.store.removedMembers()}}
   if(command==='snapshot')return this.snapshot(actor);
   if(command==='product-groups'&&!payload.force&&this.products.indexReady()){R.manager(actor);return this.products.all()}

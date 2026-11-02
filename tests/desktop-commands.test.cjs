@@ -57,3 +57,15 @@ test('task review passes the real desktop IPC allowlist and preserves date filte
   assert.equal(desktop.calls.length,1);
  }
 });
+
+test('period-only review exclusion and restore preserve their scope through local and remote desktop IPC',async()=>{
+ for(const remote of [false,true])for(const command of ['task-review-exclude','task-review-restore']){
+  const desktop=desktopRouter(remote),payload={taskId:'long-running-task',frequency:'month',anchor:'2026-10-01',reason:'跨月长期任务'};
+  const result=await desktop.invoke(command,payload);
+  assert.equal(result.ok,true);assert.equal(result.value.routed,remote?'remote':'local');assert.equal(desktop.calls.length,1);
+  assert.equal(desktop.calls[0].command,command);assert.equal(desktop.calls[0].payload,payload);
+  if(!remote){assert.equal(desktop.calls[0].actor,desktop.manager);assert.match(desktop.calls[0].requestId,/^[0-9a-f-]{36}$/)}
+  await assert.rejects(desktop.invoke(command,payload,{sender:{},senderFrame:{}}),/无效来源/);
+  assert.equal(desktop.calls.length,1);
+ }
+});

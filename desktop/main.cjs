@@ -130,7 +130,7 @@ async function uploadOne(payload){
   const result=await client.rpc('archive-commit',{uploadId:batch.id});chosen.delete(payload.selectionId);await refresh();return result;
  }finally{uploading=false}
 }
- const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan','work-policy-save','work-calendar-preview','task-review']);
+ const COMMANDS=new Set(['snapshot','sync-requirements','configure','pair','pair-code','revoke','manager-connect','manager-pair-code','manager-revoke','member-remove','draft-pick','import','scan','action','received','read','archive-spec','archive-finish','archive-reopen','asset-pick','asset-drop','asset-upload','assets','history','recover','backup','export-report','product-groups','product-group-update','product-variant-move','open-requirement','open-asset','copy','preferences','pick-root','test-notification','duplicate-inspect','duplicate-repair','task-asset-location','calibrate-contribution','asset-replan','work-policy-save','work-calendar-preview','task-review','task-review-exclude','task-review-restore']);
 async function handle(command,payload){
  if(!COMMANDS.has(command))throw Error('不支持的操作');
  if(command==='snapshot')return refresh();

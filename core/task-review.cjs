@@ -50,7 +50,8 @@ function summarize(tasks){
  const completed=tasks.filter(t=>t.state===4&&Number.isFinite(t.completedAt)&&!estimatedCompletion(t)),sealed=tasks.filter(t=>t.state===4&&t.sealed);
  return {taskCount:tasks.length,totalPoints:round(tasks.reduce((sum,t)=>sum+t.totalPoints,0)),completedCount:completed.length,completedPoints:round(completed.reduce((sum,t)=>sum+t.totalPoints,0)),sealedCount:sealed.length,pendingArchiveCount:tasks.filter(t=>t.state===4&&!t.sealed).length};
 }
-function queryTaskReview(tasks=[],people=[],options={},now=Date.now()){
+const reviewExclusionKey=(range,taskId)=>range.startDate+':'+range.endDate+':'+taskId;
+function queryTaskReview(tasks=[],people=[],options={},now=Date.now(),exclusions=[]){
  const range=reviewRange(options,now),basis=options.basis??'completed';
  if(typeof basis!=='string'||!Object.hasOwn(BASES,basis))R.fail('请选择提出、分配、完成或封存时间');
  const spec=BASES[basis];
@@ -61,16 +62,20 @@ function queryTaskReview(tasks=[],people=[],options={},now=Date.now()){
  const input=options.query??'';
  if(typeof input!=='string'||input.length>300)R.fail('搜索内容最多 300 个字符');
  const query=input.trim().toLocaleLowerCase('zh-CN'),personMap=new Map(people.map(p=>[p.id,p]));
+ const visible=task=>!personMap.get(task.owner)?.removed&&!task.deleted&&!(task.state<4&&!task.sealed&&task.workbookSyncIssue?.message==='五个状态文件夹内未找到原需求表，请检查是否被移动或改名');
+ const periodExclusions=new Map(exclusions.filter(e=>e.startDate===range.startDate&&e.endDate===range.endDate).map(e=>[e.taskId,e]));
+ const enrich=task=>{const points=taskPoints(task);return {...task,matchedAt:Number.isFinite(task[spec.field])?task[spec.field]:null,totalPoints:points.value,pointsIncomplete:points.incomplete,timestampEstimated:basis==='completed'&&estimatedCompletion(task)}};
+ const excludedTasks=tasks.filter(task=>visible(task)&&periodExclusions.has(task.id)).map(task=>({...enrich(task),exclusion:{...periodExclusions.get(task.id)}})).sort((a,b)=>(b.exclusion.at||0)-(a.exclusion.at||0)||String(a.id).localeCompare(String(b.id)));
  const candidates=tasks.filter(task=>{
-  if(task.deleted||task.state<4&&!task.sealed&&task.workbookSyncIssue?.message==='五个状态文件夹内未找到原需求表，请检查是否被移动或改名')return false;
+  if(!visible(task)||periodExclusions.has(task.id))return false;
   if(personId&&(task.owner||'_unassigned')!==personId)return false;
   if(state==='sealed'&&!(task.state===4&&task.sealed)||state==='unsealed'&&!(task.state===4&&!task.sealed))return false;
   if(/^\d$/.test(state)&&task.state!==Number(state))return false;
   if(query){const text=[task.title,task.product,task.brand,task.code,task.filename,task.operator,personMap.get(task.owner)?.name,task.id].join(' ').toLocaleLowerCase('zh-CN');if(!text.includes(query))return false}
   return true;
  });
- const selected=candidates.filter(t=>Number.isFinite(t[spec.field])&&t[spec.field]>=range.start&&t[spec.field]<range.end).map(t=>{const points=taskPoints(t);return {...t,matchedAt:t[spec.field],totalPoints:points.value,pointsIncomplete:points.incomplete,timestampEstimated:basis==='completed'&&estimatedCompletion(t)}}).sort((a,b)=>b.matchedAt-a.matchedAt||String(a.id).localeCompare(String(b.id)));
+ const selected=candidates.filter(t=>Number.isFinite(t[spec.field])&&t[spec.field]>=range.start&&t[spec.field]<range.end).map(enrich).sort((a,b)=>b.matchedAt-a.matchedAt||String(a.id).localeCompare(String(b.id)));
  const personGroups=new Map();for(const task of selected){const id=task.owner||'_unassigned';if(!personGroups.has(id))personGroups.set(id,[]);personGroups.get(id).push(task)}
- return {range,basis,basisLabel:spec.label,generatedAt:now,tasks:selected,people:[...personGroups].map(([id,mine])=>({id,name:personMap.get(id)?.name||(id==='_unassigned'?'未分配':id),removed:!!personMap.get(id)?.removed,...summarize(mine)})),summary:summarize(selected),quality:{missingTimestampCount:candidates.filter(t=>!Number.isFinite(t[spec.field])).length,estimatedTimestampCount:selected.filter(t=>t.timestampEstimated).length,missingPointsCount:selected.filter(t=>t.pointsIncomplete).length},definitions:{state:'状态、人员归属、事项及点数为当前保存值，不是所选日期当时的历史快照。',time:'按'+spec.label+'筛选，北京时间；结束日期包含全天。',missingTimestamp:'缺少所选时间戳的数量按当前人员、状态与搜索条件统计，无法确定所属日期，因此不计入日期结果。',completedPoints:'已完结且运营确认时间非推定的任务当前点数合计；推定确认记录仍显示在任务列表并单独提示。',totalPoints:'筛选结果中任务当前事项点数合计，包含已标注的推定确认记录。'}};
+ return {range,basis,basisLabel:spec.label,generatedAt:now,tasks:selected,excludedTasks,excludedCount:excludedTasks.length,people:[...personGroups].map(([id,mine])=>({id,name:personMap.get(id)?.name||(id==='_unassigned'?'未分配':id),removed:!!personMap.get(id)?.removed,...summarize(mine)})),summary:summarize(selected),quality:{missingTimestampCount:candidates.filter(t=>!Number.isFinite(t[spec.field])).length,estimatedTimestampCount:selected.filter(t=>t.timestampEstimated).length,missingPointsCount:selected.filter(t=>t.pointsIncomplete).length},definitions:{state:'状态、人员归属、事项及点数为当前保存值，不是所选日期当时的历史快照。',time:'按'+spec.label+'筛选，北京时间；结束日期包含全天。',missingTimestamp:'缺少所选时间戳的数量按当前人员、状态与搜索条件统计，无法确定所属日期，因此不计入日期结果。',completedPoints:'已完结且运营确认时间非推定的任务当前点数合计；推定确认记录仍显示在任务列表并单独提示。',totalPoints:'筛选结果中任务当前事项点数合计，包含已标注的推定确认记录。',exclusions:'手动排除仅作用于完全相同的日期范围，不受人员、状态、关键词或时间依据切换影响；已排除列表保留本期可恢复的任务，不受这些筛选限制。'}};
 }
-module.exports={queryTaskReview,reviewRange,BASES};
+module.exports={queryTaskReview,reviewRange,reviewExclusionKey,BASES};

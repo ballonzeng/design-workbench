@@ -21,7 +21,7 @@ async function evaluate(code){return win.webContents.executeJavaScript(code)}
 async function until(fn,message){const end=Date.now()+7000;while(Date.now()<end){if(await fn())return;await wait(40)}throw Error(message)}
 async function click(selector){await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing '+${JSON.stringify(selector)});e.click()})()`);await wait(40)}
 async function select(selector,value){await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing select');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await wait(40)}
-async function rowIds(){return evaluate(`[...document.querySelectorAll('.review-table tbody tr[data-review-task]')].map(e=>e.dataset.reviewTask).sort()`)}
+async function rowIds(){return evaluate(`[...document.querySelectorAll('.review-tasks .task-card[data-review-task]')].map(e=>e.dataset.reviewTask).sort()`)}
 async function rows(expected,label){await until(async()=>JSON.stringify(await rowIds())===JSON.stringify([...expected].sort()),label+' unexpected rows');results.push({check:label,rows:await rowIds()})}
 async function calendar(which,date){await click('[data-calendar="'+which+'"]');await until(()=>evaluate(`!!document.querySelector('.date-picker[open]')`),'calendar did not open');await click('.date-picker [data-date="'+date+'"]');await until(()=>evaluate(`!document.querySelector('.date-picker[open]')`),'calendar did not close')}
 async function audit(label){
@@ -34,6 +34,7 @@ async function audit(label){
   assert.equal(metrics.controls.top,0,label+' window controls top');assert(metrics.controls.right<=metrics.width+1,label+' controls right');
   if(metrics.dialog){assert(metrics.dialog.top>=42&&metrics.dialog.bottom<=metrics.height+1,label+' dialog bounds');assert(metrics.dialog.scroll<=metrics.dialog.width+1,label+' dialog body overflow')}
   results.push({check:label,...metrics});
+  if(['exclude-dialog','excluded-tasks'].includes(label)&&width!==1024)fs.writeFileSync(path.join(out,label+'-'+width+'.png'),(await win.capturePage()).toPNG());
  }
  win.setSize(1360,900);await wait(100);fs.writeFileSync(path.join(out,label+'.png'),(await win.capturePage()).toPNG());
 }
@@ -41,7 +42,8 @@ app.whenReady().then(async()=>{
  service=new Service(path.join(out,'db'));
  const fixtures=[
   task('prev-sealed',{sealed:true,sealedAt:local(-1,6)}),
-  task('prev-pending',{owner:'lv',title:'上月SKU',completedAt:local(0,1,0)-1,items:[{id:'row-6',row:6,type:'basic',typeName:'单图任务',qty:3,points:2.4}]}),
+  task('prev-pending',{owner:'chang',title:'上月SKU',completedAt:local(0,1,0)-1,items:[{id:'row-6',row:6,type:'basic',typeName:'单图任务',qty:3,points:2.4}]}),
+  task('removed-task',{owner:'lv',title:'已移除成员任务',items:[{id:'row-6',row:6,type:'basic',typeName:'单图任务',qty:1,points:999}]}),
   task('prev-estimated',{title:'上月详情页',completedAt:local(-1,10),completionFromFolder:true,completionTimeSource:'file-estimate'}),
   task('cross-month',{title:'跨月主图',completedAt:local(0,1),completedMonth:currentMonth}),
   task('current-only',{title:'本月主图',requestedAt:local(0,1,9),assignedAt:local(0,1,10),completedAt:local(0,1),completedMonth:currentMonth}),
@@ -63,6 +65,7 @@ app.whenReady().then(async()=>{
      return {ok:true,value};
     }finally{active--}
    }
+   if(['task-review-exclude','task-review-restore'].includes(command))return {ok:true,value:await service.call(actor,command,payload)};
    if(command==='history')return {ok:true,value:[]};
    throw Error('Unexpected operation during read-only review: '+command);
   }catch(e){return {ok:false,error:e.message}}
@@ -79,8 +82,20 @@ app.whenReady().then(async()=>{
  assert(await evaluate(`!!document.querySelector('#review-results-status[aria-live]')`),'results status must announce changes');
  assert(await evaluate(`document.querySelector('.task-review').textContent.includes('推定')`),'inferred time note missing');
  assert(await evaluate(`document.querySelector('.task-review').textContent.includes('缺少')`),'missing time note missing');
+ assert.equal(await evaluate(`document.querySelector('.review-table')`),null,'review details must use cards, not table');
+ assert(await evaluate(`[...document.querySelectorAll('.review-tasks .task-card')].every(c=>c.querySelector('.task-top')&&c.querySelector('.task-content')&&c.querySelector('.task-footer')&&c.querySelector('.point-display')&&c.querySelector('.task-title'))`),'review cards must retain existing task-card structure');
+ assert(await evaluate(`document.querySelector('[data-review-task="prev-pending"]').textContent.includes('2.4')&&document.querySelector('[data-review-task="prev-pending"]').textContent.includes('单图任务')`),'card must show points and contribution items');
+ assert(await evaluate(`document.querySelector('[data-review-task="prev-pending"]').textContent.includes('运营确认完成时间')`),'card must show selected timestamp basis');
+ assert(await evaluate(`[...document.querySelectorAll('.review-tasks .task-footer [data-command]')].every(e=>['task-detail','task-asset-location','review-exclude-open'].includes(e.dataset.command))`),'review cards must not expose workflow mutation actions');
+ results.push({check:'existing task cards preserve points, items, timestamps and detail links'});
  await audit('previous-month');
- await select('#review-person','lv');await rows(['prev-pending'],'removed member history');
+ assert.equal(await evaluate(`document.querySelector('#review-person option[value="lv"]')`),null,'removed member must not appear in personnel filter');
+ assert.equal(await evaluate(`document.querySelector('.review-person-card[data-person="lv"]')`),null,'removed member must not appear in personnel totals');
+ assert.deepEqual((await service.call(actor,'task-review',{personId:'lv',frequency:'month',anchor:previousMonth})).tasks,[],'direct query must not return removed member tasks');
+ assert.equal(await evaluate(`document.querySelector('.review-metric:nth-child(2) strong').textContent`),'10.4','removed member points leaked into total');
+ assert.equal(service.store.get('task','removed-task').items[0].points,999,'excluding removed members must preserve original task');
+ results.push({check:'removed members excluded from options, tasks and totals'});
+ await select('#review-person','chang');await rows(['prev-pending'],'active member history');
  await select('#review-person','');await select('#review-state','sealed');await rows(['prev-sealed'],'current sealed filter');
  await select('#review-state','unsealed');await rows(['prev-pending','prev-estimated'],'current pending archive filter');
  await select('#review-state','all');await select('#review-basis','requested');
@@ -99,7 +114,7 @@ app.whenReady().then(async()=>{
  await rows(['prev-sealed'],'single day');
  await click('[data-command="review-period"][data-period="week"]');
  const weekday=new Date(local(-1,5)+TZ).getUTCDay(),weekStart=local(-1,5,0)-((weekday+6)%7)*86400000;
- await rows(fixtures.filter(t=>Number.isFinite(t.completedAt)&&t.completedAt>=weekStart&&t.completedAt<weekStart+7*86400000).map(t=>t.id),'Monday to Sunday week');
+ await rows(fixtures.filter(t=>t.owner!=='lv'&&Number.isFinite(t.completedAt)&&t.completedAt>=weekStart&&t.completedAt<weekStart+7*86400000).map(t=>t.id),'Monday to Sunday week');
  await click('[data-command="review-preset"][data-preset="previous"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'reset before search');
  const q=queries.length;
  await evaluate(`(()=>{const e=document.querySelector('#review-search');e.focus();e.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));e.value='主';e.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true,data:'主'}))})()`);
@@ -107,7 +122,7 @@ app.whenReady().then(async()=>{
  assert(await evaluate(`document.activeElement===document.querySelector('#review-search')&&document.querySelector('#review-search').value==='主'`),'Chinese composition focus lost');
  await evaluate(`(()=>{const e=document.querySelector('#review-search');e.value='主图';e.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'主图'}))})()`);
  await rows(['prev-sealed'],'Chinese search commits once');
- await click('.review-table tbody [data-command="task-detail"]');await until(()=>evaluate(`document.querySelector('#sheet').open`),'task detail not opened');
+ await click('.review-tasks .task-title[data-command="task-detail"]');await until(()=>evaluate(`document.querySelector('#sheet').open`),'task detail not opened');
  assert(await evaluate(`document.querySelector('#sheet-title').textContent.includes('主图')`));await audit('task-detail');await click('[data-command="close-sheet"]');
  await evaluate(`(()=>{const e=document.querySelector('#review-search');e.value='';e.dispatchEvent(new InputEvent('input',{bubbles:true}))})()`);
  await rows(['prev-sealed','prev-pending','prev-estimated'],'search clear');
@@ -121,10 +136,33 @@ app.whenReady().then(async()=>{
  await click('[data-command="review-preset"][data-preset="previous"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'final previous month');
  await audit('final-review');
  for(const [width,height] of [[1360,900],[820,640]]){
-  win.setSize(width,height);await wait(100);await evaluate(`document.querySelector('.review-table-wrap').scrollIntoView({block:'center',behavior:'instant'})`);await wait(100);
-  fs.writeFileSync(path.join(out,'task-table-'+width+'.png'),(await win.capturePage()).toPNG());
+  win.setSize(width,height);await wait(100);await evaluate(`document.querySelector('.review-tasks').scrollIntoView({block:'center',behavior:'instant'})`);await wait(100);
+  fs.writeFileSync(path.join(out,'task-cards-'+width+'.png'),(await win.capturePage()).toPNG());
  }
  assert.equal(service.store.db.prepare('SELECT total_changes() AS n').get().n,before,'review mutated fixture database');
+ // Exclusion changes only the review-period preference; source workflow records stay intact.
+ const taskBeforeExclusion=service.store.get('task','prev-pending');
+ await click('[data-command="review-exclude-open"][data-task="prev-pending"]');
+ await until(()=>evaluate(`document.querySelector('#sheet').open`),'exclusion explanation did not open');
+ await audit('exclude-dialog');
+ await evaluate(`(()=>{const e=document.querySelector('#review-exclude-reason');if(e)e.value='跨月长期任务，本月单独核对'})()`);
+ await click('[data-command="review-exclude-confirm"]');
+ await rows(['prev-sealed','prev-estimated'],'exclude current-period task');
+ assert.equal(await evaluate(`document.querySelector('.review-metric:nth-child(2) strong').textContent`),'8','excluded task points must leave totals');
+ assert(await evaluate(`document.querySelector('.review-exclusions').textContent.includes('上月SKU')`),'excluded task must remain available for restoration');
+ await evaluate(`(()=>{const e=document.querySelector('.review-exclusions');e.open=true;e.scrollIntoView({block:'start',behavior:'instant'})})()`);await audit('excluded-tasks');
+ await click('[data-command="review-refresh"]');await rows(['prev-sealed','prev-estimated'],'exclusion survives query refresh');
+ await select('#review-basis','requested');await rows(['prev-sealed','prev-estimated','cross-month','missing-date'],'exclusion follows same period across timestamp bases');
+ await select('#review-basis','completed');
+ await click('[data-command="review-period"][data-period="day"]');await calendar('review-anchor',dayKey(local(0,1,0)-1));
+ await rows(['prev-pending'],'different period retains the excluded task');
+ await click('[data-command="review-preset"][data-preset="previous"]');await rows(['prev-sealed','prev-estimated'],'returning to original period preserves exclusion');
+ await evaluate(`document.querySelector('.review-exclusions').open=true`);
+ await click('[data-command="review-restore"][data-task="prev-pending"]');await rows(['prev-sealed','prev-pending','prev-estimated'],'restore excluded task');
+ assert.equal(await evaluate(`document.querySelector('.review-metric:nth-child(2) strong').textContent`),'10.4','restored task points must return');
+ assert.deepEqual(service.store.get('task','prev-pending'),taskBeforeExclusion,'review exclusion or restore changed task workflow, points or timestamps');
+ results.push({check:'period-only exclusion and restoration preserve original workflow'});
+
  // Add enough private records to verify real pagination, then freeze the write baseline again.
  for(let i=0;i<45;i++){const id='page-'+String(i).padStart(2,'0');service.store.put('task',id,task(id,{title:'分页测试主图'+i,completedAt:local(-1,15,12,i)}))}
  const pageBaseline=service.store.db.prepare('SELECT total_changes() AS n').get().n;
