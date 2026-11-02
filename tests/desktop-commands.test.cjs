@@ -45,3 +45,15 @@ test('desktop unknown commands and untrusted renderer sources never reach either
 test('calendar preview and save pass the desktop allowlist for local and remote managers',async()=>{
  for(const remote of [false,true])for(const command of ['work-calendar-preview','work-policy-save']){const desktop=desktopRouter(remote),payload={month:'2026-09',revision:0};assert.equal((await desktop.invoke(command,payload)).ok,true);assert.equal(desktop.calls[0].command,command);assert.equal(desktop.calls[0].transport,remote?'remote':'local')}
 });
+
+test('task review passes the real desktop IPC allowlist and preserves date filters for local and remote managers',async()=>{
+ for(const remote of [false,true]){
+  const desktop=desktopRouter(remote),payload={frequency:'custom',start:'2026-10-01',end:'2026-10-31',basis:'completed',personId:'hong',state:'unsealed',query:'主图'};
+  const result=await desktop.invoke('task-review',payload);
+  assert.equal(result.ok,true);assert.equal(result.value.routed,remote?'remote':'local');assert.equal(desktop.calls.length,1);
+  assert.equal(desktop.calls[0].command,'task-review');assert.equal(desktop.calls[0].payload,payload);
+  if(!remote){assert.equal(desktop.calls[0].actor,desktop.manager);assert.match(desktop.calls[0].requestId,/^[0-9a-f-]{36}$/)}
+  await assert.rejects(desktop.invoke('task-review',payload,{sender:{},senderFrame:{}}),/无效来源/);
+  assert.equal(desktop.calls.length,1);
+ }
+});
