@@ -27,6 +27,7 @@ async function calendar(which,date){await click('[data-calendar="'+which+'"]');a
 async function audit(label){
  for(const [width,height] of [[1360,900],[1024,650],[820,640]]){
   win.setSize(width,height);await wait(120);
+  if(['selected-person-return','zero-person-return'].includes(label)){await evaluate(`document.querySelector('[data-command="review-person-all"]').closest('.section-heading').scrollIntoView({block:'start',behavior:'instant'})`);await wait(60)}
   const metrics=await evaluate(`(()=>{const main=document.querySelector('main'),root=document.documentElement,controls=document.querySelector('.window-controls'),r=controls.getBoundingClientRect(),open=document.querySelector('dialog[open]'),body=open?.querySelector('#sheet-body,.calendar-content');return {width:innerWidth,height:innerHeight,doc:root.scrollWidth,rootHeight:root.scrollHeight,rootClient:root.clientHeight,main:main.scrollWidth,mainWidth:main.clientWidth,controls:{top:r.top,right:r.right,width:r.width},dialog:open?{top:open.getBoundingClientRect().top,bottom:open.getBoundingClientRect().bottom,width:body?.clientWidth,scroll:body?.scrollWidth}:null}})()`);
   assert(metrics.doc<=metrics.width+1,label+' document horizontal overflow '+JSON.stringify(metrics));
   assert(metrics.main<=metrics.mainWidth+1,label+' main horizontal overflow '+JSON.stringify(metrics));

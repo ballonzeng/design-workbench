@@ -33,11 +33,15 @@ function workSegments(from,to,policies={}){
  return result;
 }
 function workingMs(from,to,policies={}){return workSegments(from,to,policies).reduce((n,s)=>n+s.end-s.start,0)}
+// Actual durations always exclude Shanghai Saturdays and Sundays. The planning
+// calendar remains independent: a makeup weekend can still carry planned points.
+function actualWorkSegments(from,to,policies={}){return workSegments(from,to,policies).filter(segment=>{const weekday=new Date(midnight(segment.date)+TZ).getUTCDay();return weekday!==0&&weekday!==6})}
+function actualWorkingMs(from,to,policies={}){return actualWorkSegments(from,to,policies).reduce((n,s)=>n+s.end-s.start,0)}
 function capacity(from,to,policies={},cutoff=to){
  const days=[];for(let at=midnight(dayKey(from));at<to;at+=DAY){const info=dayInfo(dayKey(at),policies),start=Math.max(at,from),end=Math.min(at+DAY,to),ms=workingMs(start,end,policies),elapsed=workingMs(start,Math.min(end,cutoff),policies),normal=info.hours*HOUR;days.push({date:info.date,working:info.working,verified:info.verified,reason:info.reason,hours:round(ms/HOUR),points:round(normal?info.points*ms/normal:0),elapsedHours:round(elapsed/HOUR),elapsedPoints:round(normal?info.points*elapsed/normal:0)})}
  const sum=key=>round(days.reduce((n,d)=>n+d[key],0));return {days,workdays:days.filter(d=>d.working).length,hours:sum('hours'),points:sum('points'),elapsedHours:sum('elapsedHours'),elapsedPoints:sum('elapsedPoints'),verified:days.every(d=>d.verified),source:SOURCE,timezone:'Asia/Shanghai'};
 }
 function trackedIntervals(task,cutoff){const entries=(task.workIntervals||[]).map(s=>({...s}));if(task.runningSince&&task.timingTracked)entries.push({start:task.runningSince,end:cutoff,owner:task.owner});return entries.filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end>s.start).map(s=>({...s,end:Math.min(s.end,cutoff)})).filter(s=>s.end>s.start)}
-function taskTiming(task,from,to,policies={}){const intervals=trackedIntervals(task,to).flatMap(s=>workSegments(Math.max(from,s.start),Math.min(to,s.end),policies).map(w=>({...w,owner:s.owner,taskId:task.id})));return {hours:round(intervals.reduce((n,s)=>n+s.end-s.start,0)/HOUR),complete:task.timingTracked===true&&!task.timingIncomplete&&!task.importedTiming&&!task.externalTiming,intervals}}
+function taskTiming(task,from,to,policies={}){const intervals=task.recordOnly?[]:trackedIntervals(task,to).flatMap(s=>actualWorkSegments(Math.max(from,s.start),Math.min(to,s.end),policies).map(w=>({...w,owner:s.owner,taskId:task.id}))),ms=intervals.reduce((n,s)=>n+s.end-s.start,0);return {ms,hours:round(ms/HOUR),complete:!task.recordOnly&&task.timingTracked===true&&!task.timingIncomplete&&!task.importedTiming&&!task.externalTiming,intervals}}
 function unionHours(intervals){let end=-Infinity,ms=0;for(const s of [...intervals].sort((a,b)=>a.start-b.start)){if(s.end>end){ms+=s.end-Math.max(s.start,end);end=s.end}}return round(ms/HOUR)}
-module.exports={DEFAULT,SOURCE,DAY,HOUR,dayKey,midnight,validDate,validatePolicy,policyFor,dayInfo,workSegments,workingMs,capacity,trackedIntervals,taskTiming,unionHours};
+module.exports={DEFAULT,SOURCE,DAY,HOUR,dayKey,midnight,validDate,validatePolicy,policyFor,dayInfo,workSegments,workingMs,actualWorkSegments,actualWorkingMs,capacity,trackedIntervals,taskTiming,unionHours};

@@ -6,7 +6,10 @@ const {currentUpload,cancelStaleUploads}=require('./archive-state.cjs');
 const {Products}=require('./products.cjs');
 const R=require('./rules.cjs');
 const W=require('./work-calendar.cjs');
+const {taskDuration}=require('./task-duration.cjs');
 const {hasWorkbookLock}=require('./workbook-lock.cjs');
+const {isHistoricalTask}=require('./historical-tasks.cjs');
+const historicalTasks=store=>store.historicalTasks();
 const requestIdentity=task=>JSON.stringify([task.requestedAt,task.code,R.normalize(task.product)]);
 class Service extends EventEmitter{
  constructor(dir,{identity=null,saveIdentity=null,host='0.0.0.0',port=47831}={}){
@@ -85,11 +88,11 @@ class Service extends EventEmitter{
  online(personId){return [...this.streams.values()].some(s=>s.actor.personId===personId)}
  broadcast(){for(const stream of this.streams.values())stream.res.write('data: {"kind":"changed"}\n\n');this.emit('change')}
  snapshot(actor){
-  const tasks=this.store.all('task').filter(t=>!(t.state<4&&!t.sealed&&t.workbookSyncIssue?.message==='五个状态文件夹内未找到原需求表，请检查是否被移动或改名')).filter(t=>actor.role==='manager'||t.owner===actor.personId&&t.state>0).sort((a,b)=>(a.state===0?0:1)-(b.state===0?0:1)||(b.updatedAt-a.updatedAt));
+  const tasks=[...this.store.all('task'),...(actor.role==='manager'?historicalTasks(this.store):[])].filter(t=>!(t.state<4&&!t.sealed&&t.workbookSyncIssue?.message==='五个状态文件夹内未找到原需求表，请检查是否被移动或改名')).filter(t=>actor.role==='manager'||t.owner===actor.personId&&t.state>0).sort((a,b)=>(a.state===0?0:1)-(b.state===0?0:1)||(b.updatedAt-a.updatedAt));
   const nasStatus={connected:!!this.nas.lease&&!this.nas.error&&!this.startError,error:this.startError||this.nas.error};
   const serverTime=Date.now(),workPolicies=this.store.get('setting','workPolicies')||{},month=R.monthKey(serverTime),range=require('./report.cjs').periodRange('month',month+'-01'),monthlyCalendar=W.capacity(range.start,range.end,workPolicies,serverTime);
-  for(const task of tasks){const timing=W.taskTiming(task,0,serverTime,workPolicies);task.effectiveElapsedMs=timing.hours*3600000;task.effectiveTimingComplete=timing.complete}
-  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,archiveStorageVersion:2,
+  for(const task of tasks){const timing=taskDuration(task,{to:serverTime,policies:workPolicies});task.effectiveElapsedMs=timing.recordedMs;task.effectiveTimingComplete=timing.complete;const {intervals,...display}=timing;task.designTiming=display;task.confirmationWaitingMs=task.state===3&&Number.isFinite(task.reviewAt)?W.actualWorkingMs(task.reviewAt,serverTime,workPolicies):null}
+  return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,archiveStorageVersion:3,durationCalculationVersion:1,
    ...(actor.role==='manager'?{config:this.nas.config||this.store.get('setting','nas'),port:this.port,jobs:this.store.all('job').filter(j=>j.status==='prepared').map(j=>({id:j.id,taskId:j.next?.id,error:j.error||'等待恢复'})),importIssues:this.store.get('setting','importIssues')||[],events:this.store.recent(30)}:{})};
  }
  async importFile(bytes,filename,options={},state=0,existing=false){
@@ -212,7 +215,7 @@ class Service extends EventEmitter{
    R.manager(actor);if(typeof payload.month!=='string'||!W.validDate(payload.month+'-01'))R.fail('请选择生效月份');
    const policy=W.validatePolicy(payload.policy);return this.store.exclusive(()=>{const revision=this.store.get('setting','workPolicyRevision')||0;if(payload.revision!==revision)R.fail('工作日规则已更新，请重新打开后修改',409);const policies=this.store.get('setting','workPolicies')||{};this.store.atomic(()=>{policies[payload.month]=policy;this.store.put('setting','workPolicies',policies);this.store.put('setting','workPolicyRevision',revision+1);this.store.event('work-policy-updated',actor.personId,null,{month:payload.month,policy,revision:revision+1})});this.broadcast();return {saved:true,revision:revision+1}});
   }
-  if(command==='task-review'){R.manager(actor);return require('./task-review.cjs').queryTaskReview(this.store.all('task'),R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),payload,Date.now(),this.store.all('reviewExclusion'))}
+  if(command==='task-review'){R.manager(actor);return require('./task-review.cjs').queryTaskReview([...this.store.all('task'),...historicalTasks(this.store)],R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),payload,Date.now(),this.store.all('reviewExclusion'))}
   if(command==='task-review-exclude'||command==='task-review-restore'){
    R.manager(actor);
    const {queryTaskReview,reviewRange,reviewExclusionKey}=require('./task-review.cjs'),range=reviewRange(payload),taskId=payload.taskId;
@@ -227,7 +230,7 @@ class Service extends EventEmitter{
      if(existing)this.broadcast();return {restored:true,changed:!!existing,range};
     }
     if(existing)return {excluded:true,changed:false,range,exclusion:existing};
-    const task=this.store.get('task',taskId);if(!task)R.fail('任务不存在',404);
+    const task=this.store.get('task',taskId)||this.store.get('historicalTask',taskId);if(!task)R.fail('任务不存在',404);
     const people=R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id)})),matches=queryTaskReview([task],people,{frequency:'custom',start:range.startDate,end:range.endDate,basis:payload.basis});
     if(!matches.tasks.length)R.fail('任务不在所选日期范围内，或该成员已移出组织，请刷新后重试',409);
     const exclusion={taskId,startDate:range.startDate,endDate:range.endDate,reason,at:Date.now(),by:actor.personId};
@@ -235,6 +238,7 @@ class Service extends EventEmitter{
     return {excluded:true,changed:true,range,exclusion};
    });
   }
+  if(payload.taskId&&this.store.get('historicalTask',payload.taskId)&&!['history','task-asset-location'].includes(command))R.fail('这是历史补录记录，仅用于回顾和统计，未关联原需求表或封存产物');
   if(command==='report-data'){R.manager(actor);const {periodRange}=require('./report.cjs'),range=periodRange(payload.frequency,payload.anchor),generatedAt=Date.now(),history=this.store.reportTasks(Math.min(generatedAt,range.end-1));return {tasks:history.tasks,events:this.store.reportEvents(range.start,Math.min(range.end,generatedAt+1)),generatedAt,unavailable:history.unavailable,workPolicies:this.store.get('setting','workPolicies')||{},removedPeople:this.store.removedMembers()}}
   if(command==='snapshot')return this.snapshot(actor);
   if(command==='product-groups'&&!payload.force&&this.products.indexReady()){R.manager(actor);return this.products.all()}
@@ -246,14 +250,16 @@ class Service extends EventEmitter{
    return {path:file,taskId:task.id,assignmentId:task.assignmentId};
   }
   if(command==='task-asset-location'){
+   const historical=historicalTasks(this.store).find(t=>t.id===payload.taskId);
+   if(historical){R.manager(actor);const archive=historical.historicalArchive;if(!archive)R.fail('历史补录尚未关联封存文件');const config=this.nas.config||this.store.get('setting','nas');if(!config)R.fail('尚未连接资产库');const location=await guarded(config.assetRoot,path.relative(config.assetRoot,archive.productPath));if(!await exists(location))R.fail('未找到封存目录，请检查 NAS 访问权限');return {path:location,taskId:historical.id,historical:true,pendingCode:archive.identification==='pending-code'}}
    const task=this.store.get('task',payload.taskId);if(!task)R.fail('任务不存在',404);if(actor.role!=='manager')R.own(actor,task);
    if(task.state!==4||(!task.sealed&&!(task.deliveries||[]).length))R.fail('任务尚未上传成功任何产物');
    const product=await this.nas.productDirectory({brand:task.brand,product:task.product,code:task.code},false);if(product.isNew||!await exists(product.path))R.fail('未找到该69码的封存产品目录，请检查 NAS');return {path:product.path,taskId:task.id};
   }
-  if(command==='history'){const t=this.store.get('task',payload.taskId);if(!t)R.fail('任务不存在',404);if(actor.role!=='manager')R.own(actor,t);return this.store.events(t.id)}
+  if(command==='history'){const t=this.store.get('task',payload.taskId)||this.store.get('historicalTask',payload.taskId);if(!t)R.fail('任务不存在',404);if(actor.role!=='manager')R.own(actor,t);return this.store.events(t.id)}
   if(command==='assets'){
    if(this.nas?.lease&&!payload.recordsOnly&&(payload.force||!this.products.indexReady()))await this.store.exclusive(()=>this.products.sync({force:!!payload.force}));
-   const groups=this.products.all(),records=this.store.all('asset').filter(a=>!a.missingAt&&(!payload.mine||a.author===actor.personId)).map(({files,...a})=>({...a,requirement:(()=>{const t=this.store.get('task',a.taskId);return t?{title:t.title||t.product,filename:t.filename,state:t.state,canOpen:actor.role==='manager'||t.owner===actor.personId}:null})(),authorName:R.PEOPLE.find(p=>p.id===a.author)?.name||'人员未知',files:(files||[]).map(f=>({name:f.name,path:f.path,size:f.size,kind:f.kind})),aliases:groups.filter(g=>g.variants.some(v=>v.code===a.code)).flatMap(g=>[g.canonicalName,...g.aliases])}));
+   const groups=this.products.all(),records=this.store.all('asset').filter(a=>!a.missingAt&&(!payload.mine||a.author===actor.personId)).map(({files,...a})=>({...a,requirement:(()=>{const t=this.store.get('task',a.taskId)||this.store.get('historicalTask',a.taskId);return t?{title:t.title||t.product,filename:t.filename,state:t.state,recordOnly:!!t.recordOnly,canView:actor.role==='manager',canOpen:!t.recordOnly&&(actor.role==='manager'||t.owner===actor.personId)}:null})(),authorName:R.PEOPLE.find(p=>p.id===a.author)?.name||'人员未知',files:(files||[]).map(f=>({name:f.name,path:f.path,size:f.size,kind:f.kind})),aliases:groups.filter(g=>g.variants.some(v=>v.code===a.code)).flatMap(g=>[g.canonicalName,...g.aliases])}));
    if(!payload.mine)for(const group of groups)for(const variant of group.variants)if(variant.path&&!records.some(a=>a.code===variant.code))records.push({id:'product:'+group.id+':'+variant.code,brand:group.brand,product:variant.name,code:variant.code,path:variant.path,aliases:[group.canonicalName,...group.aliases],source:'nas-index',at:null});
    return records;
   }

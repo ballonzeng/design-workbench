@@ -13,6 +13,14 @@ class Store{
  get(kind,id){const r=this.db.prepare('SELECT body FROM records WHERE kind=? AND id=?').get(kind,id);return r?JSON.parse(r.body):null}
  all(kind){return this.db.prepare('SELECT body FROM records WHERE kind=?').all(kind).map(r=>JSON.parse(r.body))}
  removedMembers(){return this.db.prepare('SELECT id,body FROM records WHERE kind=?').all('removedMember').map(r=>({...JSON.parse(r.body),personId:r.id}))}
+ historicalTasks(){
+  const {isHistoricalTask}=require('./historical-tasks.cjs');
+  return this.all('historicalTask').filter(isHistoricalTask).map(task=>{
+   const archive=this.get('historicalArchive',task.id);
+   if(archive?.status==='archived'&&archive.taskId===task.id&&archive.author===task.owner&&archive.category==='packaging'&&Number.isFinite(archive.at)&&path.isAbsolute(archive.path||'')&&path.isAbsolute(archive.productPath||'')&&archive.files?.length&&archive.files.every(f=>path.isAbsolute(f.path||'')&&/^[a-f0-9]{64}$/.test(f.sha256)&&Number.isSafeInteger(f.size)&&f.size>0))return {...task,historicalArchive:archive};
+   return task;
+  });
+ }
  put(kind,id,body){
   if(kind==='task'&&!this.inAtomic)return this.atomic(()=>this.put(kind,id,body));
   this.db.prepare('INSERT INTO records(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body').run(kind,id,JSON.stringify(body));
@@ -34,6 +42,10 @@ class Store{
    const correction=this.get('contributionCalibration',calibrationKey(task))||(round===0?this.get('contributionCalibration',task.id+':'+task.completedAt+':'+task.owner):null);
    if(correction&&task.state===4&&task.completedAt===correction.completedAt&&task.owner===correction.owner&&task.code===correction.code&&round===(correction.archiveRound||0)){task.items=structuredClone(correction.items);task.reportCalibrationAt=correction.at}
   }
+  // Explicit, date-only supplements are new evidence about an earlier completion.
+  // Their audit timestamp remains today; do not forge historical task versions.
+  const {isHistoricalTask}=require('./historical-tasks.cjs');
+  for(const task of this.historicalTasks())if(isHistoricalTask(task)&&task.completedAt<=cutoff&&!known.has(task.id)){tasks.push({...task,reportHistoricalBackfill:true,reportSupplementedAt:task.createdAt});known.add(task.id)}
   const unavailable=this.all('task').filter(t=>!known.has(t.id)&&Math.min(t.createdAt||Infinity,t.requestedAt||Infinity)<=cutoff).map(t=>({id:t.id,filename:t.filename,reason:'该周期早于可追溯版本记录，无法还原当时人员、事项和状态'}));
   return {tasks,unavailable};
  }

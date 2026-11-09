@@ -7,7 +7,7 @@ const {nameDelivery}=require('./naming.cjs');
 const {automaticNames}=require('./automatic-names.cjs');const {imageWidth}=require('./image-metadata.cjs');
 const {archiveIdentity,currentUpload}=require('./archive-state.cjs');
 const manifestIdentity=({files,delivery})=>digest(JSON.stringify(delivery?{files,delivery}:files));
-function checkStorageLayout(upload){if(upload.storageLayout!==undefined&&upload.storageLayout!==2)fail('上传记录的存储布局版本不支持，请更新负责人端',409)}
+function checkStorageLayout(upload){if(upload.storageLayout!==undefined&&![2,3].includes(upload.storageLayout))fail('上传记录的存储布局版本不支持，请更新负责人端',409)}
 const SOURCE_EXT=new Set(['.psd','.psb','.ai','.cdr','.afdesign','.c4d','.blend','.aep','.prproj','.fig','.zip']);
 const IMAGE_EXT=new Set(['.jpg','.jpeg','.png','.gif','.webp','.tif','.tiff']);
 function hasCategoryAssets(task,category,exceptId=null){
@@ -110,7 +110,7 @@ async function checkSignature(file,name){
  if(!ok)fail('文件内容与扩展名不符：'+name);
 }
 class Assets{
- constructor(store,nas,products=null){this.store=store;this.nas=nas;this.products=products;this.inflight=new Set();this.busy=new Set()}
+ constructor(store,nas,products=null){this.store=store;this.nas=nas;this.products=products;this.inflight=new Set();this.busy=new Set();this.publicationQueues=new Map()}
  lockBatch(id){
   if(this.busy.has(id)||[...this.inflight].some(k=>k.startsWith(id+'/')))fail('该批次仍有文件正在传输或处理，请等待结束后重试',409);
   this.busy.add(id);
@@ -183,11 +183,29 @@ class Assets{
   const root=path.join(category.path,folder,...(round?['返工-'+round]:[]));
   return {...category,path:root,source:shape==='split'?path.join(root,'01.源文件'):root,output:shape==='split'?path.join(root,'02.导出图片'):root};
  }
+ deliveryCategory(category,task,shape=this.categoryShape(category)){
+  const round=task.archiveRound||0;if(!Number.isSafeInteger(round)||round<0)fail('任务返工轮次无效',409);
+  // Task IDs stay in metadata. Human-facing folders retain date / designer / type names.
+  const root=round?path.join(category.path,'返工-'+round):category.path;
+  return {...category,path:root,source:shape==='split'?path.join(root,'01.源文件'):root,output:shape==='split'?path.join(root,'02.导出图片'):root};
+ }
+ async withPublication(category,fn){
+  const key=category.path.toLowerCase(),previous=this.publicationQueues.get(key)||Promise.resolve();let release;
+  const current=new Promise(resolve=>release=resolve);this.publicationQueues.set(key,current);
+  await previous.catch(()=>{});try{return await fn()}finally{release();if(this.publicationQueues.get(key)===current)this.publicationQueues.delete(key)}
+ }
+ checkReservedTargets(task,files,category){
+  const targets=new Map(files.map(f=>[path.join(f.kind==='source'?category.source:category.output,f.relative).toLowerCase(),f]));
+  for(const upload of this.store.all('upload')){
+   if(upload.taskId===task.id||!['uploading','publishing'].includes(upload.status)||!upload.category||!currentUpload(this.store.get('task',upload.taskId),upload))continue;
+   for(const f of upload.files||[]){const root=f.kind==='source'?upload.category.source:upload.category.output;if(typeof root!=='string'||typeof f.relative!=='string')continue;const own=targets.get(path.join(root,f.relative).toLowerCase());if(own&&own.sha256!==f.sha256)fail('同一交付位置已有其他任务正在上传，文件同名但内容不同。请区分实际交付日期或文件版本后重试：'+own.name,409)}
+  }
+ }
  async resolveUploadCategory(u,task,product,item,splitDelivery,{create=true,freezeLegacyFlat=false}={}){
   if(product.path!==u.product.path)fail('资产目录发生变化，请重新选择文件',409);
-  if(u.storageLayout===2){
+  if([2,3].includes(u.storageLayout)){
    if(u.taskId!==task.id||(u.archiveRound||0)!==(task.archiveRound||0))fail('上传记录与任务或返工轮次不一致，请重新选择产物',409);
-   const base=await this.nas.categoryDirectory(product,item,create,'flat'),expected=this.taskCategory(base,task,this.categoryShape(u.category));
+   const base=await this.nas.categoryDirectory(product,item,create,'flat'),expected=u.storageLayout===2?this.taskCategory(base,task,this.categoryShape(u.category)):this.deliveryCategory(base,task,this.categoryShape(u.category));
    if(['path','source','output'].some(k=>u.category[k]!==expected[k]))fail('任务资产目录发生变化，未改动原产物，请重新选择文件',409);
    // Prepare fixes both the task directory and flat/split layout. New sibling
    // directories must never redirect an already prepared or publishing batch.
@@ -210,18 +228,21 @@ class Assets{
   if(hasCategoryAssets(task,spec.category,previous?.id))fail((spec.categoryName||'该类别')+'已经归档，请勿重复上传',409);
   if(previous){
    this.checkUpload(previous,task,actor);await this.nas.ready();
-   if(previous.storageLayout===2){const assetItem=modern?{...item,category:spec.category}:item,product=await this.nas.productDirectory(assetItem);await this.resolveUploadCategory(previous,task,product,assetItem,!!previous.delivery,{create:false,freezeLegacyFlat:!previous.delivery})}
+   if([2,3].includes(previous.storageLayout)){const assetItem=modern?{...item,category:spec.category}:item,product=await this.nas.productDirectory(assetItem);await this.resolveUploadCategory(previous,task,product,assetItem,!!previous.delivery,{create:false,freezeLegacyFlat:!previous.delivery})}
    return this.refreshReceived(previous);
   }
   if(task.sealed||!modern&&item.sealed)fail('任务已经封存',409);
   const assetItem=modern?{...item,category:spec.category}:item;
-   await this.nas.ready();const productResolution=this.products?await this.products.confirm(assetItem,payload.productDecision):null,product=await this.nas.productDirectory(assetItem),category=this.taskCategory(await this.nas.categoryDirectory(product,assetItem,false,[2,3].includes(delivery?.namingVersion)?'flat':!!delivery),task);
+   await this.nas.ready();const productResolution=this.products?await this.products.confirm(assetItem,payload.productDecision):null,product=await this.nas.productDirectory(assetItem),category=this.deliveryCategory(await this.nas.categoryDirectory(product,assetItem,false,[2,3].includes(delivery?.namingVersion)?'flat':!!delivery),task);
   for(const u of this.store.all('upload'))if(currentUpload(task,u)&&uploadCategory(task,u)===spec.category&&u.status==='publishing')fail('上次封存正在恢复，请使用同一批文件重试');
+  this.checkReservedTargets(task,files,category);
   for(const f of files){const target=path.join(f.kind==='source'?category.source:category.output,f.relative);await guarded(this.nas.config.assetRoot,path.relative(this.nas.config.assetRoot,target));if(await exists(target)&&await fileHash(target)!==f.sha256)fail('正式库存在同名但内容不同的文件，请确认新版本名称后上传：'+f.name)}
   const id=crypto.randomUUID(),stage=await ensureDir(this.nas.config.assetRoot,'_workbench-staging',id);
-   const record={id,storageLayout:2,archiveRound:task.archiveRound||0,taskIdentity:archiveIdentity(task),taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
+   const record={id,storageLayout:3,archiveRound:task.archiveRound||0,taskIdentity:archiveIdentity(task),taskId:task.id,itemId:modern?null:itemId,itemIds:modern?[]:task.items.filter(i=>i.category===item.category).map(i=>i.id),actor:actor.personId,manifestHash,files,spec,delivery,productResolution,status:'uploading',received:{},stage,product,category,createdAt:Date.now(),selfCheckedAt:Date.now()};
   const replaced=this.store.all('upload').filter(u=>u.taskId===task.id&&u.actor===actor.personId&&uploadCategory(task,u)===spec.category&&u.status==='uploading');
   if(replaced.some(u=>this.busy.has(u.id)||[...this.inflight].some(key=>key.startsWith(u.id+'/'))))fail('该类别仍有文件正在传输或处理，请等待结束后再更换文件');
+  // Recheck after filesystem awaits so two simultaneous preparations cannot reserve conflicting bytes.
+  this.checkReservedTargets(task,files,category);
   this.store.atomic(()=>{for(const u of replaced)this.store.put('upload',u.id,{...u,status:'cancelled',replacedBy:id,error:'已由重新选择的文件替代'});this.store.put('upload',id,record)});return record;
  }
  async receive(uploadId,fileId,actor,stream,length){
@@ -268,6 +289,7 @@ class Assets{
   const product=await this.nas.productDirectory(item,true);
   // An older client may be resuming a flat upload after split folders were added.
   const category=await this.resolveUploadCategory(u,task,product,item,!!u.delivery,{freezeLegacyFlat:!u.delivery});
+  return this.withPublication(category,async()=>{
   const plan=await this.publicationPlan(u,category);u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
   try{
    await this.publishFiles(u,category,plan);
@@ -279,6 +301,7 @@ class Assets{
    await this.finalize(u,task);
    return task;
   }catch(e){u.error=e.message;this.store.put('upload',u.id,u);throw e}
+  });
  }
  async commitDelivery(u,task,actor){
   if(task.state!==4||task.sealed||u.status==='done')fail('任务状态已改变',409);
@@ -286,6 +309,7 @@ class Assets{
   if(u.files.some(f=>!u.received[f.id]))fail('还有文件尚未上传完整');
   await this.nas.ready();const item={...task.items[0],category:u.spec.category};
   const product=await this.nas.productDirectory(item,true),category=await this.resolveUploadCategory(u,task,product,item,[2,3].includes(u.delivery?.namingVersion)?'flat':true);
+  return this.withPublication(category,async()=>{
   const plan=await this.publicationPlan(u,category);
   if([3,4].includes(u.delivery?.namingVersion)&&u.spec.category==='main')for(const {file:f,source} of plan.filter(p=>p.file.kind==='output')){if(await imageWidth(source)!==f.width)fail('图片实际宽度与预览不一致，请重新选择：'+f.name)}
   u.status='publishing';u.published??={};this.store.put('upload',u.id,u);
@@ -297,6 +321,7 @@ class Assets{
     task=await this.nas.sync(task,next,{L4:addresses},{kind:'asset-archived',actor:actor.personId,body:{assetId:u.id,category:u.spec.category,code:item.code,files:u.files.map(f=>({name:f.name,size:f.size,sha256:f.sha256,path:u.published[f.id]}))}});this.products?.recordArchive(item,product,u.productResolution);
    await this.finalizeDelivery(u,task,delivery);return task;
   }catch(e){u.error=e.message;this.store.put('upload',u.id,u);throw e}
+  });
  }
  async finish(taskId,actor,version){
   const task=this.store.get('task',taskId);if(!task)fail('任务不存在',404);
