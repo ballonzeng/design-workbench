@@ -131,7 +131,9 @@ class RequirementsSync{
    }
    for(const task of target?[target]:this.store.all('task')){
     if(this.stopped)break;
-    if(!includeCompleted&&task.state===4)continue;
+    // Pending archives are still live work: saved corrections must reach upload.
+    // Fully sealed history remains opt-in, including its asset-directory checks.
+    if(!includeCompleted&&task.state===4&&task.sealed)continue;
     if(task.blocked||this.store.all('job').some(j=>j.status==='prepared'&&j.next?.id===task.id))continue;
     const matches=locations.filter(l=>fileKey(l.filename)===fileKey(task.filename));
     if(matches.length!==1){changed+=Number(this.issue(task,matches.length?'多个状态文件夹存在同一份需求，请保留唯一原表后同步':'五个状态文件夹内未找到原需求表，请检查是否被移动或改名'));continue}
@@ -139,7 +141,11 @@ class RequirementsSync{
     try{
      const file=await guarded(this.nas.config.taskRoot,location.stage,location.filename),stat=await fs.stat(file);
      const signature=location.stage+'/'+location.filename+':'+stat.size+':'+stat.mtimeMs;
-     if(!force&&this.seen.get(task.id)?.signature===signature&&this.seen.get(task.id)?.hash===task.workbookHash&&!task.workbookSyncIssue)continue;
+     const pendingArchive=task.state===4&&!includeCompleted;
+     // Ordinary refresh forces active work, but must not reread every unchanged
+     // pending workbook. First observation still hashes it, including edits made
+     // before startup; only an explicit completed refresh bypasses this cache.
+     if((!force||pendingArchive)&&this.seen.get(task.id)?.signature===signature&&this.seen.get(task.id)?.hash===task.workbookHash&&!task.workbookSyncIssue)continue;
      if(await hasWorkbookLock(file,this.nas.config.taskRoot)){
       changed+=Number(this.issue(task,'检测到 Excel 占用记录；请保存并关闭，随后自动检查恢复并同步流转',location));continue;
      }
@@ -195,7 +201,7 @@ class RequirementsSync{
   this.status={...this.status,state:this.status.error?'failed':'ready',...(this.status.error?{}:{lastCheckedAt:Date.now()})};
   if(changed||discovery.imported||discovery.relinked||discovery.repaired||assetSync.changed||this.status.error!==previousError||force)this.service.broadcast();
   else if(!targetId)this.service.emit?.('sync-status',this.status);
-  return {checked:!this.status.error,codeCorrection,taskIssues:this.store.all('task').filter(t=>(targetId?t.id===targetId:includeCompleted||t.state!==4)&&t.workbookSyncIssue).length,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
+  return {checked:!this.status.error,codeCorrection,taskIssues:this.store.all('task').filter(t=>(targetId?t.id===targetId:includeCompleted||t.state!==4||!t.sealed)&&t.workbookSyncIssue).length,changed:changed+discovery.imported+discovery.relinked+discovery.repaired+assetSync.changed,workbooksChanged:changed,imported:discovery.imported,relinked:discovery.relinked,repaired:discovery.repaired,importIssues:discovery.issues.length,assetsChanged:assetSync.changed,assetsReopened:assetSync.reopened,partialAssets:assetSync.partial,...this.status};
  }
 }
 module.exports={RequirementsSync,reconcileTask,itemsIdentity,assignedInboxState,isBarcodeOnlyChange,onlyBarcodeSync};

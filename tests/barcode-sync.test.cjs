@@ -5,7 +5,7 @@ const {zipSync,strToU8}=require('fflate');
 const {workbook}=require('../operator/test-fixture.cjs');
 const {Service}=require('../core/service.cjs');
 const {parseRequirement,identifyWorkbook,unpack,workflowFields}=require('../core/workbook.cjs');
-const {reconcileTask}=require('../core/requirements-sync.cjs');
+const {RequirementsSync,reconcileTask}=require('../core/requirements-sync.cjs');
 const {archiveIdentity}=require('../core/archive-state.cjs');
 const {digest}=require('../core/store.cjs');
 const R=require('../core/rules.cjs');
@@ -120,6 +120,75 @@ test('a completed barcode correction accepts new operator ratings in the same sa
  assert.equal(after.workbookHash,digest(bytes));assert.deepEqual(await fs.readFile(f.file()),bytes);assert.equal(R.total(after),R.total(before));
  await f.check();const repeated=f.current();assert.deepEqual(repeated.ratings,ratings);assert.equal(repeated.code,newCode);assert.equal(repeated.workbookHash,digest(bytes));assert.equal(repeated.version,after.version);assert.equal(repeated.archiveRound,after.archiveRound);assert.equal(repeated.workbookSyncIssue,null);
  assert.equal(f.service.store.events(before.id).filter(event=>event.kind==='rollback').length,0);
+});
+
+test('ordinary refresh and background checks adopt a saved barcode correction while a completed task awaits archive',async t=>{
+ for(const mode of ['ordinary refresh','background','first background after restart'])await t.test(mode,async t=>{
+  const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+  const scored=await f.edit({J6:80,J7:100,K6:'满意'}),ratings=parseRequirement(scored,filename).ratings;
+  f.service.store.put('task',f.current().id,{...f.current(),ratings,workbookHash:digest(scored),receivedAt:100,readAt:101});
+  const before=f.current(),saved=await f.edit({D6:newCode,D7:newCode});
+  const result=mode==='first background after restart'?await new RequirementsSync(f.service).check():mode==='background'?await f.service.requirementsSync.check():await f.service.call(designer,'sync-requirements');
+  const after=f.current();assert.equal(result.checked,true);assert.equal(after.code,newCode);assert.equal(after.workbookSyncIssue,null);
+  assert.ok(after.items.every(item=>item.code===newCode));assert.equal(after.workbookHash,digest(saved));assert.deepEqual(await fs.readFile(f.file()),saved);
+  for(const key of ['id','state','sealed','owner','assignmentId','assignedAt','receivedAt','readAt','elapsedMs','startedAt','reviewAt','completedAt','completedMonth','confirmationMethod','confirmedBy','ratings'])assert.deepEqual(after[key],before[key],key);
+  assert.deepEqual(after.items.map(item=>[item.id,item.row,item.type,item.qty,item.points,item.note]),before.items.map(item=>[item.id,item.row,item.type,item.qty,item.points,item.note]));
+  assert.equal(R.total(after),R.total(before));assert.equal(f.service.store.all('task').length,1);
+  const events=f.service.store.events(before.id).filter(event=>event.kind==='excel-synced'&&event.body.codeCorrection);
+  assert.equal(events.length,1);assert.deepEqual(events[0].body.codeCorrection,{from:oldCode,to:newCode});
+ });
+});
+
+test('unchanged pending archives stay cached on ordinary refresh; explicit completed refresh rereads them',async t=>{
+ const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+ await f.service.call(manager,'sync-requirements');const before=f.current(),target=f.file();
+ const read=fs.readFile;let reads=0;t.mock.method(fs,'readFile',async(file,...args)=>{if(String(file)===target)reads++;return read(file,...args)});
+ const missing=path.join(f.assetRoot,'do-not-scan-completed.png');f.service.store.put('asset','pending-asset',{id:'pending-asset',taskId:before.id,files:[{path:missing}]});
+ await f.service.call(manager,'sync-requirements');await f.service.requirementsSync.check();await f.service.call(designer,'sync-requirements');
+ assert.equal(reads,0);assert.equal(f.current().version,before.version);assert.equal(f.service.store.get('asset','pending-asset').missingAt,undefined);
+ await f.service.call(manager,'sync-requirements',{includeCompleted:true});assert.ok(reads>0);assert.ok(f.service.store.get('asset','pending-asset').missingAt);
+});
+
+test('only saved pending workbooks are reread while sealed history stays untouched',async t=>{
+ const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+ const extra=[];
+ for(const [title,sealed] of [['合成任务二',false],['合成已封存',true]]){
+  const name=filename.replace('合成商品',title),bytes=editCells(syntheticWorkbook(),{H4:46268,I4:12,J4:46268,K4:13,M4:46268,N4:14,H6:title});
+  await fs.writeFile(path.join(f.taskRoot,R.STAGES[4],name),bytes);let task=await f.service.importFile(bytes,name,{},4,true);
+  if(sealed){task={...task,sealed:true,sealedAt:Date.now()};f.service.store.put('task',task.id,task)}
+  extra.push({task,file:f.service.nas.taskPath(task)});
+ }
+ await f.service.call(manager,'sync-requirements');
+ const stable=f.current(),changed=extra[0],sealed=extra[1];
+ await fs.writeFile(changed.file,corrected(await fs.readFile(changed.file)));await fs.writeFile(sealed.file,corrected(await fs.readFile(sealed.file)));
+ const read=fs.readFile,counts=new Map();t.mock.method(fs,'readFile',async(file,...args)=>{const key=String(file);counts.set(key,(counts.get(key)||0)+1);return read(file,...args)});
+ const result=await f.service.call(manager,'sync-requirements');
+ assert.equal(result.checked,true);assert.equal(counts.get(f.file())||0,0);assert.equal(counts.get(changed.file),1);assert.equal(counts.get(sealed.file)||0,0);
+ assert.equal(f.current().version,stable.version);assert.equal(f.service.store.get('task',changed.task.id).code,newCode);assert.deepEqual(f.service.store.get('task',sealed.task.id),sealed.task);
+});
+
+test('a save during pending-archive sync is retried without adopting stale bytes',async t=>{
+ const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+ await f.service.call(manager,'sync-requirements');const before=f.current(),bytes=await f.edit({D6:newCode,D7:newCode}),latestCode='6999999999903',later=editCells(bytes,{D6:latestCode,D7:latestCode}),target=f.file();
+ const stat=fs.stat;let stats=0;t.mock.method(fs,'stat',async(...args)=>{if(String(args[0])===target&&++stats===3){await fs.writeFile(target,later);const now=new Date(Date.now()+2000);await fs.utimes(target,now,now)}return stat(...args)});
+ await f.service.call(manager,'sync-requirements');assert.ok(stats>=3);assert.equal(f.current().code,oldCode);assert.equal(f.current().workbookHash,before.workbookHash);assert.deepEqual(await fs.readFile(target),later);
+ await f.service.requirementsSync.check();assert.equal(f.current().code,latestCode);assert.equal(f.current().workbookHash,digest(later));assert.equal(f.current().workbookSyncIssue,null);
+});
+
+test('pending-archive barcode changes resume after an Excel lock is removed',async t=>{
+ const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+ await f.service.call(manager,'sync-requirements');const before=f.current();await f.edit({D6:newCode,D7:newCode});
+ const lock=path.join(path.dirname(f.file()),'~$'+filename);await fs.writeFile(lock,'synthetic Excel lock');
+ await f.service.requirementsSync.check();assert.equal(f.current().code,oldCode);assert.equal(f.current().workbookHash,before.workbookHash);assert.match(f.current().workbookSyncIssue.message,/Excel|占用/);
+ await fs.unlink(lock);await f.service.requirementsSync.check();assert.equal(f.current().code,newCode);assert.equal(f.current().workbookSyncIssue,null);
+});
+
+test('ordinary refresh reports pending workbook conflicts without adopting mixed requirement edits',async t=>{
+ const f=await setup(t);await f.action(designer,'start');await f.action(designer,'review');await f.action(manager,'approve',{chatConfirmed:true});
+ const before=f.current();await f.edit({D6:newCode,D7:newCode,G6:before.items[0].qty+1});
+ const result=await f.service.call(manager,'sync-requirements');assert.equal(result.checked,true);assert.equal(result.taskIssues,1);
+ assert.equal(f.current().code,oldCode);assert.equal(f.current().workbookHash,before.workbookHash);assert.equal(R.total(f.current()),R.total(before));assert.match(f.current().workbookSyncIssue.message,/69码|事项/);
+ await f.edit({G6:before.items[0].qty});const retried=await f.service.call(manager,'sync-requirements');assert.equal(retried.taskIssues,0);assert.equal(f.current().code,newCode);assert.equal(f.current().workbookSyncIssue,null);
 });
 
 test('reconcile changes only barcode identity and preserves item IDs and point metadata',()=>{

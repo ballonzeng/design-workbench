@@ -210,14 +210,15 @@ test('action synchronizes saved edits, rejects stale versions and succeeds after
  assert.equal(current().state,3);
 });
 
-test('normal refresh leaves completed workbooks and archived files untouched; explicit refresh checks both',async t=>{
+test('normal refresh leaves sealed workbooks and archived files untouched; explicit refresh checks both',async t=>{
  const {service,current,edit,file}=await setup(t);clearInterval(service.requirementsSync.timer);await service.requirementsSync.running;
  await edit({H4:46268,I4:12,J4:46268,K4:13,M4:46268,N4:14});await service.call(manager,'sync-requirements');assert.equal(current().state,4);
- const oldHash=current().workbookHash;await edit({N4:15});
+ service.store.put('task',current().id,{...current(),sealed:true,sealedAt:Date.now()});
+ const oldHash=current().workbookHash,wb=unpack(await fs.readFile(file()));wb.entries[wb.status.file]=strToU8(wb.status.content.replace('需求表','需求表（已核对）'));await fs.writeFile(file(),Buffer.from(zipSync(wb.entries)));
  let readCount=0;const read=fs.readFile;fs.readFile=async function(target,...args){if(String(target)===file())readCount++;return read.call(this,target,...args)};t.after(()=>{fs.readFile=read});
  const assetFile=path.join(service.nas.config.assetRoot,'removed.png');service.store.put('asset','completed-file',{id:'completed-file',taskId:current().id,files:[{path:assetFile}]});
  await service.call(manager,'sync-requirements');assert.equal(current().workbookHash,oldHash);assert.equal(readCount,0);assert.equal(service.store.get('asset','completed-file').missingAt,undefined);
- await service.call(manager,'sync-requirements',{includeCompleted:true});assert.notEqual(current().workbookHash,oldHash);assert.equal(current().workflowFields.N4,'15');assert.ok(readCount>0);assert.ok(service.store.get('asset','completed-file').missingAt);
+ await service.call(manager,'sync-requirements',{includeCompleted:true});assert.notEqual(current().workbookHash,oldHash);assert.equal(current().workflowFields.N4,'14');assert.ok(readCount>0);assert.ok(service.store.get('asset','completed-file').missingAt);
 });
 
 test('explicit completed refresh is not swallowed by an in-flight background check',async()=>{
