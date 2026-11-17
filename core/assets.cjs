@@ -392,6 +392,9 @@ class Assets{
    if(!['uploading','publishing'].includes(candidate.status)||candidate.files.some(f=>!candidate.received[f.id])||[...this.inflight].some(k=>k.startsWith(candidate.id+'/')))continue;
    if(!taskId&&candidate.retryAt&&candidate.retryAt>Date.now())continue;
    const task=this.store.get('task',candidate.taskId);if(!task||task.state!==4||task.sealed||task.blocked||(candidate.archiveRound||0)!==(task.archiveRound||0))continue;
+   // A recovery error can occur before recoverJob marks the task blocked. Do not
+   // start another publication while that task's workbook journal is unresolved.
+   if(this.store.all('job').some(j=>j.kind==='workbook'&&j.status==='prepared'&&j.next?.id===task.id))continue;
    try{await this.commit(candidate.id,{role:'designer',personId:candidate.actor});restored++}
    catch(e){const latest=this.store.get('upload',candidate.id);if(latest&&latest.status!=='done')this.store.put('upload',latest.id,{...latest,error:e.message,retryAt:Date.now()+30000})}
   }

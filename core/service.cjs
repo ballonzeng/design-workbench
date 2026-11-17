@@ -22,7 +22,24 @@ class Service extends EventEmitter{
   await new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,this.host,resolve)});this.port=this.server.address().port;
   this.migrateContributionStandard();
    if(this.store.get('setting','nas')){try{await this.ensureNasConnection(true);const issues=this.store.get('setting','importIssues')||[];if(issues.length)await this.scanExisting()}catch{}}
-  this.requirementsSync=new RequirementsSync(this);this.on('sync-status',status=>{for(const stream of this.streams.values())stream.res.write('data: '+JSON.stringify({kind:'sync-status',status})+'\n\n')});this.requirementsSync.start();this.archiveRetryTimer=setInterval(()=>{if(this.archiveRetryRunning||!this.nas.lease)return;this.archiveRetryRunning=this.store.exclusive(async()=>{await this.nas.recover();await this.assets.recover();const count=await this.assets.retryPending();if(count)this.broadcast()}).catch(()=>{}).finally(()=>{this.archiveRetryRunning=null})},30000);this.archiveRetryTimer.unref();return this;
+  this.requirementsSync=new RequirementsSync(this);this.on('sync-status',status=>{for(const stream of this.streams.values())stream.res.write('data: '+JSON.stringify({kind:'sync-status',status})+'\n\n')});this.requirementsSync.start();this.archiveRetryTimer=setInterval(()=>{if(this.archiveRetryRunning||!this.nas.lease)return;this.archiveRetryRunning=this.store.exclusive(()=>this.retryArchives()).catch(()=>{}).finally(()=>{this.archiveRetryRunning=null})},30000);this.archiveRetryTimer.unref();return this;
+ }
+ async retryArchives(){
+  const errors=[],lastAttemptAt=Date.now();let restored=0;
+  // Each recovery phase validates its own task/batch before writing. One failed
+  // journal must not prevent unrelated, unblocked uploads from being retried.
+  for(const [phase,run] of [['workbooks',()=>this.nas.recover()],['assets',()=>this.assets.recover()],['uploads',()=>this.assets.retryPending()]]){
+   try{const count=await run();if(phase==='uploads')restored=count}catch(e){errors.push({phase,message:e.message})}
+  }
+  const previous=this.archiveRetryStatus;
+  this.archiveRetryStatus={lastAttemptAt,restored,errors};
+  if(restored||JSON.stringify(previous?.errors||[])!==JSON.stringify(errors))this.broadcast();
+  return this.archiveRetryStatus;
+ }
+ checkRollbackUploads(task){
+  const uploads=this.store.all('upload').filter(u=>u.taskId===task.id&&currentUpload(task,u));
+  const pending=uploads.find(u=>u.status==='publishing'||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/')));
+  if(pending)R.fail('产物正在写入或传输，或等待归档回填恢复；请先完成恢复后再回退'+(pending.error?'。当前原因：'+pending.error:''),409);
  }
  async ensureNasConnection(force=false){
   if(this.connecting)return this.connecting;
@@ -93,7 +110,7 @@ class Service extends EventEmitter{
   const serverTime=Date.now(),workPolicies=this.store.get('setting','workPolicies')||{},month=R.monthKey(serverTime),range=require('./report.cjs').periodRange('month',month+'-01'),monthlyCalendar=W.capacity(range.start,range.end,workPolicies,serverTime);
   for(const task of tasks){const timing=taskDuration(task,{to:serverTime,policies:workPolicies});task.effectiveElapsedMs=timing.recordedMs;task.effectiveTimingComplete=timing.complete;const {intervals,...display}=timing;task.designTiming=display;task.confirmationWaitingMs=task.state===3&&Number.isFinite(task.reviewAt)?W.actualWorkingMs(task.reviewAt,serverTime,workPolicies):null}
   return {role:actor.role,person:R.PEOPLE.find(p=>p.id===actor.personId),serverTime,tasks,people:actor.role==='manager'?R.PEOPLE.map(p=>({...p,removed:!!this.store.get('removedMember',p.id),online:this.online(p.id),paired:this.store.all('token').some(t=>t.personId===p.id&&!t.revoked)})):[],rates:R.RATES,categories:R.CATEGORIES,monthlyCapacity:monthlyCalendar.points,monthlyCalendar,workPolicy:W.policyFor(month,workPolicies),workPolicies,workPolicyRevision:this.store.get('setting','workPolicyRevision')||0,nasStatus,workbookSync:this.requirementsSync?.status,workbookSyncVersion:1,pendingWorkbookSyncVersion:1,archiveStorageVersion:3,durationCalculationVersion:1,
-   ...(actor.role==='manager'?{config:this.nas.config||this.store.get('setting','nas'),port:this.port,jobs:this.store.all('job').filter(j=>j.status==='prepared').map(j=>({id:j.id,taskId:j.next?.id,error:j.error||'等待恢复'})),importIssues:this.store.get('setting','importIssues')||[],events:this.store.recent(30)}:{})};
+   ...(actor.role==='manager'?{config:this.nas.config||this.store.get('setting','nas'),port:this.port,jobs:this.store.all('job').filter(j=>j.status==='prepared').map(j=>({id:j.id,taskId:j.next?.id,error:j.error||'等待恢复'})),archiveRetry:this.archiveRetryStatus||null,importIssues:this.store.get('setting','importIssues')||[],events:this.store.recent(30)}:{})};
  }
  async importFile(bytes,filename,options={},state=0,existing=false){
   // Asset category belongs to the final delivery folder, not to requirement intake.
@@ -271,6 +288,9 @@ class Service extends EventEmitter{
    if(actor.role!=='manager')R.own(actor,task);
    actionBeforeSync=structuredClone(task);
    if(payload.action==='rollback'){
+    // Do not queue a rollback behind a slow archive only to reject it afterwards.
+    // The same guard runs again under the mutation lock to cover new uploads.
+    this.checkRollbackUploads(task);
     if(!task.sealed){const checked=await this.requirementsSync.checkTask(task.id,{acceptCodeCorrection:payload.confirmed===true&&payload.acceptCodeCorrection===true});if(!checked.checked)R.fail(checked.error||'当前需求表尚未检查完成',409);codeCorrection=checked.codeCorrection}
    }else await this.requirementsSync.check(true,{includeCompleted:task.state===4});
   }
@@ -321,8 +341,7 @@ class Service extends EventEmitter{
     if(payload.action==='rollback'){
      if(codeCorrection&&(old.version!==codeCorrection.version||old.workbookHash!==codeCorrection.previousHash||old.code!==codeCorrection.from))R.fail('任务已更新，请刷新后重新核对69码',409);
      if(!old.sealed&&old.workbookSyncIssue&&!codeCorrection)R.fail('请先处理原表异常后回退：'+old.workbookSyncIssue.message,409);
-     const uploads=this.store.all('upload').filter(u=>u.taskId===old.id&&(u.archiveRound||0)===(old.archiveRound||0));
-     if(uploads.some(u=>u.status==='publishing'||[...this.assets.inflight].some(k=>k.startsWith(u.id+'/'))))R.fail('产物正在写入或传输，请等待完成或恢复后再回退',409);
+     this.checkRollbackUploads(old);
     }
     const actionPayload=payload.action!=='rollback'&&payload.version===actionBeforeSync?.version&&onlyBarcodeSync(actionBeforeSync,old)?{...payload,version:old.version}:payload;
     const next=R.transition(old,actor,payload.action,actionPayload);

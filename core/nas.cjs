@@ -130,6 +130,7 @@ class Nas{
    await this.cleanupBackup(job);
    return next;
   }catch(e){
+   if(['EPERM','EACCES'].includes(e.code)&&e.syscall==='rename'&&job.phase==='moving')e.message='NAS 拒绝重命名原需求表，请检查负责人主机使用的 NAS 账号是否有这份原表的修改、删除及重命名权限。已接收的产物保留，无需重传。原始错误：'+e.message;
    job.error=e.message;this.store.put('job',job.id,job);
    try{await this.recoverJob(job)}catch(recoveryError){e.message+='；'+recoveryError.message}
    const current=this.store.get('task',next.id);if(current?.version===next.version&&current.workbookHash===next.workbookHash)return current;
