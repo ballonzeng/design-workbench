@@ -9,7 +9,7 @@ async function fixture(t,state=1,transform=bytes=>bytes){
  for(const stage of STAGES)await fs.mkdir(path.join(root,stage));
  const store=await new OperatorStore(path.join(root,'profile')).init();await store.configure({name:'王燕',root});
  const filename='26090311-九芝堂-西红花-王燕-洪华.xlsx',file=path.join(root,STAGES[state],filename),bytes=transform(identifyWorkbook(workbook(),ID));await fs.writeFile(file,bytes);
- const task=(await store.scan()).tasks[0];return {root,store,filename,file,bytes,task};
+ const task=(await store.scan(state===4?'history':'active')).tasks[0];return {root,store,filename,file,bytes,task};
 }
 function changeXml(bytes,change){const wb=unpack(bytes);wb.entries[wb.status.file]=strToU8(change(wb.status.content));return Buffer.from(zipSync(wb.entries))}
 async function manifests(root){const dir=path.join(root,'_workbench-system','recovery','barcode-corrections'),jobs=await fs.readdir(dir);return Promise.all(jobs.map(async job=>({dir:path.join(dir,job),...JSON.parse(await fs.readFile(path.join(dir,job,'manifest.json'),'utf8'))})))}
